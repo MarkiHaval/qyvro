@@ -201,15 +201,21 @@ enum FPTileCaption {
 
     static func text(for item: FileItem, media: FPMediaInfo?) -> String {
         if item.isDirectory { return "Папка" }
-        var parts = [shortKind(for: item)]
+        var parts: [String] = []
         if let media {
+            // Тип не дублируется: расширение уже видно в имени строкой выше.
+            // У видео к разрешению добавляется длительность, и вчетвером
+            // (тип, разрешение, время, вес) строка не влезала в ширину
+            // плитки — её обрезало посередине.
             parts.append(media.pixelSizeText)
             if let duration = media.durationText { parts.append(duration) }
+        } else {
+            parts.append(shortKind(for: item))
         }
         if let size = item.size {
             parts.append(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
         }
-        return parts.joined(separator: "  •  ")
+        return parts.joined(separator: " • ")
     }
 }
 
