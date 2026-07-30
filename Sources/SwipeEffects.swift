@@ -14,6 +14,22 @@ final class SwipeSurfaceWaveView: NSView {
             ?? MTLCreateSystemDefaultDevice()
     }()
     private static let commandQueue = metalDevice?.makeCommandQueue()
+    /// Доля от размера окна, в которой считается волна.
+    ///
+    /// Ядро делает девять выборок текстуры на пиксель, а при быстром листании
+    /// таких проходов выстраивается несколько подряд. На интегрированной
+    /// графике полноразмерный проход не укладывается в кадр: `updateLayer`
+    /// начинает массово выходить по проверке «предыдущий кадр ещё на GPU», и
+    /// кадры отбрасываются. Эффект намеренно мягкий и размытый, поэтому счёт в
+    /// 0.65 размера с растяжением слоя почти не отличим на глаз, но снимает с
+    /// GPU больше половины работы.
+    ///
+    /// Края перехода видны не отсюда: первый и последний кадры оверлея — это
+    /// нативные Retina-снимки, они подменяются кроссфейдом.
+    private static let renderScale: CGFloat = {
+        guard let device = metalDevice else { return 1 }
+        return device.isLowPower ? 0.65 : 1
+    }()
     private static let context: CIContext = {
         let options: [CIContextOption: Any] = [
             .cacheIntermediates: true,
@@ -458,7 +474,11 @@ final class SwipeSurfaceWaveView: NSView {
         let destinationBlurredImage = self.destinationBlurredImage ?? sourceBlurredImage
         guard !renderInFlight else { return }
         let extent = sourceImage.extent
-        let scale = max(extent.width / max(bounds.width, 1), 1)
+        // Перевод точек в пиксели снимка. Зажимать снизу единицей нельзя:
+        // на слабой графике волна считается в долях размера окна, и при
+        // зажатом коэффициенте геометрия гребня разъезжалась относительно
+        // картинки — ширина, смещение края и амплитуда оставались в точках.
+        let scale = extent.width / max(bounds.width, 1)
         let smoothness = CGFloat(FPPreferences.swipeWaveSmoothness)
         let strength = CGFloat(FPPreferences.swipeWaveStrength)
         let widthSetting = CGFloat(FPPreferences.swipeWaveWidth)
@@ -688,7 +708,7 @@ final class SwipeSurfaceWaveView: NSView {
             ? [preferredScale, 1]
             : [1]
         #else
-        let candidateScales: [CGFloat] = [1]
+        let candidateScales: [CGFloat] = [Self.renderScale]
         #endif
         for backingScale in candidateScales {
             let pixelWidth = max(Int((rect.width * backingScale).rounded(.up)), 2)
@@ -736,7 +756,9 @@ final class SwipeSurfaceWaveView: NSView {
         boundsWidth: CGFloat,
         strength: CGFloat
     ) -> CIImage {
-        let scale = max(image.extent.width / max(boundsWidth, 1), 1)
+        // Тот же перевод точек в пиксели, что и в updateLayer: радиус размытия
+        // должен уменьшаться вместе с разрешением снимка.
+        let scale = image.extent.width / max(boundsWidth, 1)
         let radius = (4.5 + strength * 25.0) * scale
         let blurred = image
             .clampedToExtent()
