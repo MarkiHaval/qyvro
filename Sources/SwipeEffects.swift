@@ -599,8 +599,24 @@ final class SwipeSurfaceWaveView: NSView {
         present(composed, progress: min(max(displayedProgress, 0), 1))
     }
 
+    /// Цветовое пространство, в котором должны лежать пиксели готового кадра.
+    ///
+    /// `IOSurface`, назначенный слою через `layer.contents`, CoreAnimation
+    /// показывает как есть, без цветокоррекции. Живая сетка и «крайние»
+    /// Retina-снимки при этом рисуются AppKit'ом уже с коррекцией под профиль
+    /// дисплея. Пока волна рендерилась в sRGB, её кадры выводились на профиль
+    /// матрицы без конверсии и выглядели чуть ярче и насыщеннее — на входе и
+    /// выходе из перехода это читалось как короткая вспышка. Рендер сразу в
+    /// профиль окна убирает расхождение: сравнивать становится нечего.
+    private var presentationColorSpace: CGColorSpace {
+        window?.colorSpace?.cgColorSpace
+            ?? NSScreen.main?.colorSpace?.cgColorSpace
+            ?? Self.outputColorSpace
+    }
+
     private func present(_ image: CIImage, progress: CGFloat) {
         let extent = image.extent.integral
+        let outputSpace = presentationColorSpace
         // Core Image renders into Metal with a bottom-left origin, while an
         // IOSurface assigned to an AppKit layer is interpreted top-left first.
         // Flip only the rendered pixels; the initial CGImage snapshot remains
@@ -618,7 +634,7 @@ final class SwipeSurfaceWaveView: NSView {
         guard let device = Self.metalDevice,
               let commandQueue = Self.commandQueue,
               let commandBuffer = commandQueue.makeCommandBuffer() else {
-            Self.context.render(renderImage, to: surface, bounds: extent, colorSpace: Self.outputColorSpace)
+            Self.context.render(renderImage, to: surface, bounds: extent, colorSpace: outputSpace)
             layer?.contentsScale = max(extent.width / max(bounds.width, 1), 1)
             layer?.contents = surface
             if finishRequested, progress >= 0.999 { finishAnimation() }
@@ -645,7 +661,7 @@ final class SwipeSurfaceWaveView: NSView {
             to: texture,
             commandBuffer: commandBuffer,
             bounds: extent,
-            colorSpace: Self.outputColorSpace
+            colorSpace: outputSpace
         )
         commandBuffer.addCompletedHandler { [weak self] _ in
             DispatchQueue.main.async {
