@@ -1,0 +1,1143 @@
+import Cocoa
+import ImageIO
+import UniformTypeIdentifiers
+import CoreImage
+import Carbon.HIToolbox
+let appDisplayName = "Qyvro"
+
+struct FileItem: Codable {
+    let url: URL
+    let name: String
+    let isDirectory: Bool
+    let size: Int64?
+    let created: Date?
+    let modified: Date?
+    let kind: String
+    let isHidden: Bool
+    let finderTags: [FPFinderTag]?
+}
+
+struct FPQuickLookGalleryEntry {
+    let url: URL
+    let visualIndex: Int
+}
+
+struct FPQuickLookRequest {
+    let entries: [FPQuickLookGalleryEntry]
+    let initialIndex: Int
+    let columnCount: Int
+    let onIndexChanged: ((URL) -> Void)?
+}
+
+enum FPDirectorySizeCalculator {
+    static func calculate(urls: [URL], completion: @escaping (Result<Int64, Error>) -> Void) {
+        DispatchQueue.global(qos: .utility).async {
+            var total: Int64 = 0
+            let keys: Set<URLResourceKey> = [
+                .isRegularFileKey,
+                .fileSizeKey,
+                .fileAllocatedSizeKey,
+                .totalFileAllocatedSizeKey
+            ]
+            for folder in urls {
+                    guard let enumerator = FileManager.default.enumerator(
+                        at: folder,
+                        includingPropertiesForKeys: Array(keys),
+                        options: [],
+                    errorHandler: { _, _ in true }
+                ) else {
+                    continue
+                }
+                for case let fileURL as URL in enumerator {
+                    autoreleasepool {
+                        guard let values = try? fileURL.resourceValues(forKeys: keys),
+                              values.isRegularFile == true else { return }
+                        total += Int64(
+                            values.totalFileAllocatedSize
+                                ?? values.fileAllocatedSize
+                                ?? values.fileSize
+                                ?? 0
+                        )
+                    }
+                }
+            }
+            DispatchQueue.main.async { completion(.success(total)) }
+        }
+    }
+}
+
+enum FPImageConversionTarget {
+    case png
+    case jpeg
+
+    var pathExtension: String {
+        switch self {
+        case .png: return "png"
+        case .jpeg: return "jpg"
+        }
+    }
+}
+
+enum FPImageConverter {
+    private static let queue = DispatchQueue(label: "Qyvro.ImageConversion", qos: .userInitiated)
+
+    static func convert(
+        urls: [URL],
+        to target: FPImageConversionTarget,
+        completion: @escaping (Result<[URL], Error>) -> Void
+    ) {
+        queue.async {
+            do {
+                let context = CIContext(options: [.cacheIntermediates: false])
+                guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB) else {
+                    throw conversionError("Не удалось создать цветовое пространство sRGB")
+                }
+                var outputs: [URL] = []
+                for sourceURL in urls {
+                    guard var image = CIImage(
+                        contentsOf: sourceURL,
+                        options: [.applyOrientationProperty: true]
+                    ) else {
+                        throw conversionError("Не удалось прочитать \(sourceURL.lastPathComponent)")
+                    }
+                    let extent = image.extent.integral
+                    guard !extent.isInfinite, !extent.isEmpty else {
+                        throw conversionError("Некорректный размер \(sourceURL.lastPathComponent)")
+                    }
+                    image = image.transformed(
+                        by: CGAffineTransform(translationX: -extent.origin.x, y: -extent.origin.y)
+                    )
+                    let destination = uniqueDestination(for: sourceURL, extension: target.pathExtension)
+                    switch target {
+                    case .png:
+                        try context.writePNGRepresentation(
+                            of: image,
+                            to: destination,
+                            format: .RGBA8,
+                            colorSpace: colorSpace
+                        )
+                    case .jpeg:
+                        // JPEG has no alpha channel. Compositing over white
+                        // prevents transparent PNGs from unexpectedly becoming black.
+                        let white = CIImage(color: .white).cropped(to: image.extent)
+                        let flattened = image.composited(over: white)
+                        try context.writeJPEGRepresentation(
+                            of: flattened,
+                            to: destination,
+                            colorSpace: colorSpace,
+                            options: [
+                                CIImageRepresentationOption(
+                                    rawValue: kCGImageDestinationLossyCompressionQuality as String
+                                ): 0.92
+                            ]
+                        )
+                    }
+                    outputs.append(destination)
+                }
+                DispatchQueue.main.async { completion(.success(outputs)) }
+            } catch {
+                DispatchQueue.main.async { completion(.failure(error)) }
+            }
+        }
+    }
+
+    private static func uniqueDestination(for source: URL, extension newExtension: String) -> URL {
+        let folder = source.deletingLastPathComponent()
+        let base = source.deletingPathExtension().lastPathComponent
+        var destination = folder.appendingPathComponent("\(base).\(newExtension)")
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: destination.path) {
+            destination = folder.appendingPathComponent("\(base) \(suffix).\(newExtension)")
+            suffix += 1
+        }
+        return destination
+    }
+
+    private static func conversionError(_ message: String) -> Error {
+        NSError(
+            domain: "Qyvro.ImageConversion",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+}
+
+final class DirectorySnapshotCache {
+    private struct Entry: Codable {
+        let savedAt: Date
+        let directoryModified: Date?
+        let items: [FileItem]
+    }
+
+    static let shared = DirectorySnapshotCache()
+    private let lock = NSLock()
+    private let persistenceQueue = DispatchQueue(label: "Qyvro.DirectoryCache", qos: .utility)
+    private let fileURL: URL
+    private var entries: [String: Entry] = [:]
+
+    private init() {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        let folder = base.appendingPathComponent("Qyvro", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        fileURL = folder.appendingPathComponent("directory-snapshots-v2.json")
+        if let data = try? Data(contentsOf: fileURL),
+           let decoded = try? JSONDecoder().decode([String: Entry].self, from: data) {
+            entries = decoded
+        }
+    }
+
+    func items(for url: URL, includeHidden: Bool) -> [FileItem]? {
+        let key = cacheKey(url: url, includeHidden: includeHidden)
+        let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = entries[key], Date().timeIntervalSince(entry.savedAt) < 60 * 60 else { return nil }
+        if let cachedModified = entry.directoryModified, let modified, abs(cachedModified.timeIntervalSince(modified)) > 0.5 {
+            return nil
+        }
+        return entry.items
+    }
+
+    func staleItems(for url: URL, includeHidden: Bool) -> [FileItem]? {
+        let key = cacheKey(url: url, includeHidden: includeHidden)
+        lock.lock()
+        defer { lock.unlock() }
+        guard let entry = entries[key], Date().timeIntervalSince(entry.savedAt) < 24 * 60 * 60 else { return nil }
+        return entry.items
+    }
+
+    func store(_ items: [FileItem], for url: URL, includeHidden: Bool) {
+        let key = cacheKey(url: url, includeHidden: includeHidden)
+        let modified = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        lock.lock()
+        entries[key] = Entry(savedAt: Date(), directoryModified: modified, items: items)
+        if entries.count > 24,
+           let oldest = entries.min(by: { $0.value.savedAt < $1.value.savedAt })?.key {
+            entries.removeValue(forKey: oldest)
+        }
+        let snapshot = entries
+        lock.unlock()
+
+        let fileURL = self.fileURL
+        persistenceQueue.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: fileURL, options: .atomic)
+        }
+    }
+
+    func invalidate(_ url: URL) {
+        let prefix = url.standardizedFileURL.path + "|"
+        lock.lock()
+        entries = entries.filter { !$0.key.hasPrefix(prefix) }
+        let snapshot = entries
+        lock.unlock()
+        let fileURL = self.fileURL
+        persistenceQueue.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            try? data.write(to: fileURL, options: .atomic)
+        }
+    }
+
+    private func cacheKey(url: URL, includeHidden: Bool) -> String {
+        "\(url.standardizedFileURL.path)|\(includeHidden ? 1 : 0)"
+    }
+}
+
+final class ThumbnailDiskCache {
+    static let shared = ThumbnailDiskCache()
+
+    private let memory = NSCache<NSString, NSImage>()
+    private let ioQueue = DispatchQueue(label: "Qyvro.ThumbnailDiskCache", qos: .utility)
+    private let folderURL: URL
+
+    private init() {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        folderURL = base.appendingPathComponent("Qyvro/Thumbnails-v3", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        memory.countLimit = 900
+        memory.totalCostLimit = 220 * 1024 * 1024
+        trimDiskCacheIfNeeded()
+    }
+
+    func image(for key: String) -> NSImage? {
+        memory.object(forKey: key as NSString)
+    }
+
+    func loadFromDisk(for key: String, completion: @escaping (NSImage?) -> Void) {
+        if let image = image(for: key) {
+            completion(image)
+            return
+        }
+        let url = cacheURL(for: key)
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            let image = autoreleasepool { NSImage(contentsOf: url) }
+            if let image {
+                self.memory.setObject(image, forKey: key as NSString, cost: self.cost(of: image))
+            }
+            DispatchQueue.main.async { completion(image) }
+        }
+    }
+
+    func store(_ image: NSImage, for key: String) {
+        memory.setObject(image, forKey: key as NSString, cost: cost(of: image))
+        let url = cacheURL(for: key)
+        ioQueue.async {
+            autoreleasepool {
+                guard let tiff = image.tiffRepresentation else { return }
+                guard let bitmap = NSBitmapImageRep(data: tiff),
+                      let data = bitmap.representation(using: .png, properties: [:]) else { return }
+                try? data.write(to: url, options: .atomic)
+            }
+        }
+    }
+
+    func removeAll() {
+        memory.removeAllObjects()
+        let folderURL = self.folderURL
+        ioQueue.async {
+            try? FileManager.default.removeItem(at: folderURL)
+            try? FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        }
+    }
+
+    private func cacheURL(for key: String) -> URL {
+        folderURL.appendingPathComponent(String(format: "%016llx.png", stableHash(key)))
+    }
+
+    private func stableHash(_ value: String) -> UInt64 {
+        value.utf8.reduce(UInt64(1469598103934665603)) { hash, byte in
+            (hash ^ UInt64(byte)) &* 1099511628211
+        }
+    }
+
+    private func cost(of image: NSImage) -> Int {
+        let size = image.size
+        return max(1, Int(size.width * size.height * 4))
+    }
+
+    private func trimDiskCacheIfNeeded() {
+        let folderURL = self.folderURL
+        ioQueue.async {
+            let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey]
+            guard let files = try? FileManager.default.contentsOfDirectory(
+                at: folderURL,
+                includingPropertiesForKeys: keys,
+                options: [.skipsHiddenFiles]
+            ), files.count > 1800 else { return }
+            let sorted = files.sorted {
+                let left = (try? $0.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
+                let right = (try? $1.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
+                return left < right
+            }
+            for file in sorted.prefix(max(0, files.count - 1400)) {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+    }
+}
+
+final class WorkspaceIconCache {
+    static let shared = WorkspaceIconCache()
+    private let cache = NSCache<NSString, NSImage>()
+
+    private init() {
+        cache.countLimit = 160
+    }
+
+    func icon(for url: URL, size: CGFloat) -> NSImage {
+        let type = url.pathExtension.lowercased()
+        let key = "\(type.isEmpty ? "file" : type)|\(Int(size.rounded()))" as NSString
+        if let image = cache.object(forKey: key) { return image }
+        let contentType = UTType(filenameExtension: type) ?? .data
+        let image = NSWorkspace.shared.icon(for: contentType)
+        image.size = NSSize(width: size, height: size)
+        cache.setObject(image, forKey: key)
+        return image
+    }
+}
+
+final class CustomFolderIconStore {
+    static let shared = CustomFolderIconStore()
+    private let defaultsKey = "CustomFolderIconsV1"
+    private let folderURL: URL
+    private let cache = NSCache<NSString, NSImage>()
+
+    private init() {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        folderURL = base.appendingPathComponent("Qyvro/FolderIcons", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folderURL, withIntermediateDirectories: true)
+        cache.countLimit = 120
+    }
+
+    func image(for folder: URL) -> NSImage? {
+        let path = folder.standardizedFileURL.path
+        if let image = cache.object(forKey: path as NSString) { return image }
+        guard let fileName = mapping()[path] else { return nil }
+        let fileURL = folderURL.appendingPathComponent(fileName)
+        guard let image = NSImage(contentsOf: fileURL) else {
+            removeIcon(for: folder)
+            return nil
+        }
+        cache.setObject(image, forKey: path as NSString)
+        return image
+    }
+
+    @discardableResult
+    func setIcon(from source: URL, for folder: URL) -> Bool {
+        guard let image = NSImage(contentsOf: source), let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let data = bitmap.representation(using: .png, properties: [:]) else { return false }
+        let path = folder.standardizedFileURL.path
+        let fileName = String(format: "%016llx.png", stableHash(path))
+        do {
+            try data.write(to: folderURL.appendingPathComponent(fileName), options: .atomic)
+            var map = mapping()
+            map[path] = fileName
+            UserDefaults.standard.set(map, forKey: defaultsKey)
+            cache.setObject(image, forKey: path as NSString)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func removeIcon(for folder: URL) {
+        let path = folder.standardizedFileURL.path
+        var map = mapping()
+        if let fileName = map.removeValue(forKey: path) {
+            try? FileManager.default.removeItem(at: folderURL.appendingPathComponent(fileName))
+        }
+        UserDefaults.standard.set(map, forKey: defaultsKey)
+        cache.removeObject(forKey: path as NSString)
+    }
+
+    private func mapping() -> [String: String] {
+        UserDefaults.standard.dictionary(forKey: defaultsKey) as? [String: String] ?? [:]
+    }
+
+    private func stableHash(_ value: String) -> UInt64 {
+        value.utf8.reduce(UInt64(1469598103934665603)) { hash, byte in
+            (hash ^ UInt64(byte)) &* 1099511628211
+        }
+    }
+}
+
+enum ExplorerViewMode: Int {
+    case list = 0
+    case smallIcons = 1
+    case largeIcons = 2
+}
+
+enum FPThemeStyleVariant: String {
+    case classic
+    case cyberEditorial
+}
+
+enum FPStyle {
+    private static func storedColor(_ key: String, fallback: NSColor) -> NSColor {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let color = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NSColor.self, from: data) else {
+            return fallback
+        }
+        return color
+    }
+
+    static func saveColor(_ color: NSColor, key: String) {
+        if let data = try? NSKeyedArchiver.archivedData(withRootObject: color, requiringSecureCoding: true) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
+    }
+
+    private static func opacity(_ key: String, fallback: CGFloat) -> CGFloat {
+        guard UserDefaults.standard.object(forKey: key) != nil else { return fallback }
+        return CGFloat(UserDefaults.standard.double(forKey: key))
+    }
+
+    static var styleVariant: FPThemeStyleVariant {
+        FPThemeStyleVariant(
+            rawValue: UserDefaults.standard.string(forKey: "ThemeStyleVariant") ?? ""
+        ) ?? .classic
+    }
+
+    static var isCyberEditorial: Bool {
+        styleVariant == .cyberEditorial
+    }
+
+    static func headingFont(ofSize size: CGFloat, weight: NSFont.Weight = .semibold) -> NSFont {
+        guard isCyberEditorial else {
+            return .systemFont(ofSize: size, weight: weight)
+        }
+        let name = weight.rawValue >= NSFont.Weight.semibold.rawValue
+            ? "AvenirNextCondensed-DemiBold"
+            : "AvenirNextCondensed-Medium"
+        return NSFont(name: name, size: size) ?? .systemFont(ofSize: size, weight: weight)
+    }
+
+    static func bodyFont(ofSize size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        guard isCyberEditorial else {
+            return .systemFont(ofSize: size, weight: weight)
+        }
+        let name = weight.rawValue >= NSFont.Weight.semibold.rawValue
+            ? "AvenirNext-DemiBold"
+            : "AvenirNext-Medium"
+        return NSFont(name: name, size: size) ?? .systemFont(ofSize: size, weight: weight)
+    }
+
+    static func migrateCyberEditorialForVersionTwo() {
+        guard styleVariant == .cyberEditorial,
+              !UserDefaults.standard.bool(forKey: "CyberEditorialPaletteV2") else { return }
+        let defaults = UserDefaults.standard
+        saveColor(NSColor(calibratedRed: 0.018, green: 0.016, blue: 0.024, alpha: 1), key: "ThemeWindowColor")
+        saveColor(NSColor(calibratedRed: 0.030, green: 0.028, blue: 0.039, alpha: 1), key: "ThemePaneColor")
+        saveColor(NSColor(calibratedRed: 0.022, green: 0.019, blue: 0.030, alpha: 1), key: "ThemeSidebarColor")
+        saveColor(NSColor(calibratedRed: 0.025, green: 0.022, blue: 0.035, alpha: 1), key: "ThemeBarColor")
+        saveColor(NSColor(calibratedRed: 0.839, green: 1.0, blue: 0.247, alpha: 1), key: "ThemeAccentColor")
+        saveColor(NSColor(calibratedRed: 0.941, green: 0.267, blue: 0.365, alpha: 1), key: "ThemeOrangeColor")
+        saveColor(NSColor(calibratedRed: 0.0, green: 0.878, blue: 1.0, alpha: 1), key: "ThemeFolderColor")
+        saveColor(NSColor(calibratedRed: 0.957, green: 0.945, blue: 0.918, alpha: 1), key: "ThemeTextColor")
+        saveColor(NSColor(calibratedRed: 0.635, green: 0.620, blue: 0.640, alpha: 1), key: "ThemeDimTextColor")
+        saveColor(NSColor(calibratedRed: 0.185, green: 0.020, blue: 0.055, alpha: 1), key: "ThemeGradientStart")
+        saveColor(NSColor(calibratedRed: 0.055, green: 0.030, blue: 0.105, alpha: 1), key: "ThemeGradientEnd")
+        defaults.set(0.70, forKey: "ThemePaneOpacity")
+        defaults.set(0.72, forKey: "ThemeSidebarOpacity")
+        defaults.set(true, forKey: "ThemeGradientEnabled")
+        defaults.set(true, forKey: "CyberEditorialPaletteV2")
+    }
+
+    // Обновлённая палитра по умолчанию (v1.1): глубокий графит с холодным
+    // сине-серым подтоном вместо коричневого — спокойнее и современнее.
+    // Пользовательские цвета из настроек по-прежнему имеют приоритет.
+    static var window: NSColor { storedColor("ThemeWindowColor", fallback: NSColor(calibratedRed: 0.071, green: 0.079, blue: 0.094, alpha: 0.90)) }
+    static var sidebar: NSColor {
+        storedColor("ThemeSidebarColor", fallback: NSColor(calibratedRed: 0.157, green: 0.183, blue: 0.238, alpha: 1))
+            .withAlphaComponent(opacity("ThemeSidebarOpacity", fallback: 0.44))
+    }
+    static var pane: NSColor {
+        storedColor("ThemePaneColor", fallback: NSColor(calibratedRed: 0.122, green: 0.136, blue: 0.157, alpha: 1))
+            .withAlphaComponent(opacity("ThemePaneOpacity", fallback: 0.58))
+    }
+    static var settingsWindow: NSColor {
+        storedColor("ThemeSettingsWindowColor", fallback: window.withAlphaComponent(1))
+            .withAlphaComponent(opacity("ThemeSettingsWindowOpacity", fallback: 0.88))
+    }
+    static var tagWindow: NSColor {
+        storedColor("ThemeTagWindowColor", fallback: sidebar.withAlphaComponent(1))
+            .withAlphaComponent(opacity("ThemeTagWindowOpacity", fallback: 0.82))
+    }
+    static var paneInactive: NSColor { pane.withAlphaComponent(max(0.42, pane.alphaComponent - 0.08)) }
+    static var bar: NSColor { storedColor("ThemeBarColor", fallback: NSColor(calibratedRed: 0.133, green: 0.148, blue: 0.171, alpha: 0.78)) }
+    static var tabBar: NSColor {
+        if isCyberEditorial {
+            return bar.blended(withFraction: 0.44, of: .black)?.withAlphaComponent(0.95) ?? bar
+        }
+        return bar.blended(withFraction: 0.28, of: .black)?.withAlphaComponent(0.82) ?? bar
+    }
+    static var tab: NSColor {
+        isCyberEditorial
+            ? NSColor(calibratedWhite: 0.060, alpha: 0.92)
+            : NSColor(calibratedRed: 0.172, green: 0.190, blue: 0.216, alpha: 0.92)
+    }
+    static var tabInactive: NSColor {
+        isCyberEditorial
+            ? NSColor(calibratedWhite: 0.018, alpha: 0.68)
+            : NSColor(calibratedRed: 0.104, green: 0.115, blue: 0.132, alpha: 0.60)
+    }
+    static var field: NSColor {
+        isCyberEditorial
+            ? NSColor(calibratedWhite: 0.012, alpha: 0.76)
+            : NSColor(calibratedRed: 0.116, green: 0.128, blue: 0.148, alpha: 0.70)
+    }
+    static var control: NSColor {
+        NSColor(calibratedWhite: 1.0, alpha: isCyberEditorial ? 0.055 : 0.075)
+    }
+    static var controlStrong: NSColor {
+        isCyberEditorial
+            ? NSColor(calibratedWhite: 1.0, alpha: 0.075)
+            : NSColor(calibratedWhite: 1.0, alpha: 0.115)
+    }
+    static var rowA: NSColor { pane.withAlphaComponent(min(0.78, pane.alphaComponent + 0.02)) }
+    static var rowB: NSColor { storedColor("ThemePaneColor", fallback: NSColor(calibratedRed: 0.101, green: 0.113, blue: 0.131, alpha: 1)).withAlphaComponent(0.62) }
+    static var rowSelection: NSColor { accent.withAlphaComponent(0.32) }
+    static var stroke: NSColor {
+        isCyberEditorial
+            ? NSColor(calibratedWhite: 1.0, alpha: 0.105)
+            : NSColor(calibratedWhite: 1.0, alpha: 0.10)
+    }
+    static var text: NSColor { storedColor("ThemeTextColor", fallback: NSColor(calibratedWhite: 0.912, alpha: 1)) }
+    static var dimText: NSColor { storedColor("ThemeDimTextColor", fallback: NSColor(calibratedWhite: 0.673, alpha: 1)) }
+    static var accent: NSColor { storedColor("ThemeAccentColor", fallback: NSColor(calibratedRed: 0.00, green: 0.758, blue: 0.798, alpha: 1)) }
+    static var accentFill: NSColor { accent.withAlphaComponent(0.58) }
+    static var orange: NSColor { storedColor("ThemeOrangeColor", fallback: NSColor(calibratedRed: 1.00, green: 0.645, blue: 0.262, alpha: 1)) }
+    static var orangeFill: NSColor { orange.withAlphaComponent(0.84) }
+    static var defaultFolder: NSColor { storedColor("ThemeFolderColor", fallback: accent) }
+    static var gradientStart: NSColor { storedColor("ThemeGradientStart", fallback: NSColor(calibratedRed: 0.118, green: 0.146, blue: 0.220, alpha: 1)) }
+    static var gradientEnd: NSColor { storedColor("ThemeGradientEnd", fallback: NSColor(calibratedRed: 0.040, green: 0.075, blue: 0.096, alpha: 1)) }
+    static var gradientEnabled: Bool {
+        guard UserDefaults.standard.object(forKey: "ThemeGradientEnabled") != nil else { return true }
+        return UserDefaults.standard.bool(forKey: "ThemeGradientEnabled")
+    }
+    static let danger = NSColor(calibratedRed: 0.90, green: 0.22, blue: 0.18, alpha: 1)
+    static var gridSpacing: CGFloat {
+        guard UserDefaults.standard.object(forKey: "GridSpacing") != nil else { return 2 }
+        return min(max(CGFloat(UserDefaults.standard.double(forKey: "GridSpacing")), 2), 36)
+    }
+}
+
+enum FPPreferences {
+    static let defaultSwipeSensitivity = 60.0
+
+    static var swipeSensitivity: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeSensitivity") != nil else {
+            return defaultSwipeSensitivity
+        }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeSensitivity"), 10), 100)
+    }
+
+    static var swipeThreshold: CGFloat {
+        CGFloat(190 - swipeSensitivity * 1.45)
+    }
+
+    static func migrateGestureSettingsForVersionOne() {
+        let migrationKey = "QyvroGestureSettingsMigratedForVersionOne"
+        guard !UserDefaults.standard.bool(forKey: migrationKey) else { return }
+
+        // Older builds wrote the old default (10) even when the user only
+        // changed an unrelated theme control. Treat that exact legacy value as
+        // an untouched default; deliberately customised values are preserved.
+        let stored = UserDefaults.standard.object(forKey: "SwipeSensitivity") == nil
+            ? nil
+            : UserDefaults.standard.double(forKey: "SwipeSensitivity")
+        if stored == nil || abs((stored ?? 10) - 10) < 0.001 {
+            UserDefaults.standard.set(defaultSwipeSensitivity, forKey: "SwipeSensitivity")
+        }
+        UserDefaults.standard.set(true, forKey: migrationKey)
+    }
+
+    static var invertedSwipeNavigation: Bool {
+        guard UserDefaults.standard.object(forKey: "SwipeNavigationInverted") != nil else { return true }
+        return UserDefaults.standard.bool(forKey: "SwipeNavigationInverted")
+    }
+
+    static var groupLargeFoldersByDate: Bool {
+        guard UserDefaults.standard.object(forKey: "GroupLargeFoldersByDate") != nil else { return true }
+        return UserDefaults.standard.bool(forKey: "GroupLargeFoldersByDate")
+    }
+
+    static var sidebarAnimationDuration: Double {
+        guard UserDefaults.standard.object(forKey: "SidebarAnimationDuration") != nil else { return 0.74 }
+        return min(max(UserDefaults.standard.double(forKey: "SidebarAnimationDuration"), 0.5), 2.0)
+    }
+
+    static var swipeWaveSmoothness: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveSmoothness") != nil else { return 0.84 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveSmoothness"), 0.25), 1.0)
+    }
+
+    static var swipeWaveStrength: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveStrength") != nil else { return 0.76 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveStrength"), 0.2), 1.0)
+    }
+
+    static var swipeWaveDuration: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveDuration") != nil else { return 0.92 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveDuration"), 0.70), 1.2)
+    }
+
+    static var swipeWaveWidth: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveWidth") != nil else { return 0.78 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveWidth"), 0.30), 1.20)
+    }
+
+    static var swipeWaveBlur: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveBlur") != nil else { return 0.46 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveBlur"), 0), 1)
+    }
+
+    static var swipeWaveExposure: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveExposure") != nil else { return 0.78 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveExposure"), 0), 1.40)
+    }
+
+    static var swipeWaveGlow: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveGlow") != nil else { return 0.54 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveGlow"), 0), 1.20)
+    }
+
+    static var swipeWaveTint: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveTint") != nil else { return 0.38 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveTint"), 0), 1)
+    }
+
+    static var swipeWaveTilt: Double {
+        guard UserDefaults.standard.object(forKey: "SwipeWaveTilt") != nil else { return 13 }
+        return min(max(UserDefaults.standard.double(forKey: "SwipeWaveTilt"), -35), 35)
+    }
+
+    static var summonHotKeyEnabled: Bool {
+        guard UserDefaults.standard.object(forKey: "GlobalSummonHotKeyEnabled") != nil else { return true }
+        return UserDefaults.standard.bool(forKey: "GlobalSummonHotKeyEnabled")
+    }
+}
+
+enum QyvroClipboardShortcut {
+    static let keyCode = UInt32(kVK_ANSI_V)
+    static let carbonModifiers = UInt32(cmdKey | shiftKey)
+    static let cocoaModifiers: NSEvent.ModifierFlags = [.command, .shift]
+    static let displayName = "⇧⌘V"
+}
+
+// MARK: - Глобальные хоткеи ⌘E и ⇧⌘V
+// Один Carbon-центр владеет всеми глобальными сочетаниями Qyvro. Так разные
+// модули не устанавливают конкурирующие обработчики одного и того же события.
+final class GlobalHotKeyCenter {
+    static let shared = GlobalHotKeyCenter()
+    var onSummon: (() -> Void)?
+    var onClipboard: (() -> Void)?
+    private var summonHotKeyRef: EventHotKeyRef?
+    private var clipboardHotKeyRef: EventHotKeyRef?
+    private var handlerRef: EventHandlerRef?
+
+    func setEnabled(_ enabled: Bool) {
+        installHandlerIfNeeded()
+        registerClipboardIfNeeded()
+        if enabled {
+            registerSummonIfNeeded()
+        } else {
+            unregisterSummon()
+        }
+    }
+
+    private func installHandlerIfNeeded() {
+        guard handlerRef == nil else { return }
+        var eventSpec = EventTypeSpec(
+            eventClass: OSType(kEventClassKeyboard),
+            eventKind: UInt32(kEventHotKeyPressed)
+        )
+        let callback: EventHandlerUPP = { _, event, userData in
+            guard let event, let userData else { return OSStatus(eventNotHandledErr) }
+            var identifier = EventHotKeyID()
+            var actualSize = 0
+            let readStatus = GetEventParameter(
+                event,
+                EventParamName(kEventParamDirectObject),
+                EventParamType(typeEventHotKeyID),
+                nil,
+                MemoryLayout<EventHotKeyID>.size,
+                &actualSize,
+                &identifier
+            )
+            guard readStatus == noErr else { return readStatus }
+            let center = Unmanaged<GlobalHotKeyCenter>
+                .fromOpaque(userData)
+                .takeUnretainedValue()
+            DispatchQueue.main.async {
+                switch identifier.id {
+                case 1: center.onSummon?()
+                case 2: center.onClipboard?()
+                default: break
+                }
+            }
+            return noErr
+        }
+        let status = InstallEventHandler(
+            GetEventDispatcherTarget(),
+            callback,
+            1,
+            &eventSpec,
+            Unmanaged.passUnretained(self).toOpaque(),
+            &handlerRef
+        )
+        if status != noErr {
+            NSLog("Qyvro: failed to install global hotkey handler (%d)", status)
+        }
+    }
+
+    private func registerSummonIfNeeded() {
+        guard summonHotKeyRef == nil else { return }
+        let identifier = EventHotKeyID(
+            signature: OSType(0x5159_5652),
+            id: 1
+        ) // 'QYVR'
+        let status = RegisterEventHotKey(
+            UInt32(kVK_ANSI_E),
+            UInt32(cmdKey),
+            identifier,
+            GetEventDispatcherTarget(),
+            0,
+            &summonHotKeyRef
+        )
+        if status != noErr {
+            NSLog("Qyvro: failed to register ⌘E (%d)", status)
+        }
+    }
+
+    private func registerClipboardIfNeeded() {
+        guard clipboardHotKeyRef == nil else { return }
+        let identifier = EventHotKeyID(
+            signature: OSType(0x5159_5652),
+            id: 2
+        ) // 'QYVR'
+        let status = RegisterEventHotKey(
+            QyvroClipboardShortcut.keyCode,
+            QyvroClipboardShortcut.carbonModifiers,
+            identifier,
+            GetEventDispatcherTarget(),
+            0,
+            &clipboardHotKeyRef
+        )
+        if status != noErr {
+            NSLog("Qyvro: failed to register ⇧⌘V (%d)", status)
+        }
+    }
+
+    private func unregisterSummon() {
+        if let summonHotKeyRef {
+            UnregisterEventHotKey(summonHotKeyRef)
+        }
+        summonHotKeyRef = nil
+    }
+}
+
+struct FPThemePreset {
+    let title: String
+    let window: NSColor
+    let pane: NSColor
+    let sidebar: NSColor
+    let bar: NSColor
+    let folder: NSColor
+    let accent: NSColor
+    let orange: NSColor
+    let gradientStart: NSColor
+    let gradientEnd: NSColor
+    let paneOpacity: Double
+    let sidebarOpacity: Double
+    var styleVariant: FPThemeStyleVariant = .classic
+
+    static let all: [FPThemePreset] = [
+        FPThemePreset(
+            title: "Cyber Editorial",
+            window: NSColor(calibratedRed: 0.018, green: 0.016, blue: 0.024, alpha: 1),
+            pane: NSColor(calibratedRed: 0.030, green: 0.028, blue: 0.039, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.022, green: 0.019, blue: 0.030, alpha: 1),
+            bar: NSColor(calibratedRed: 0.025, green: 0.022, blue: 0.035, alpha: 1),
+            folder: NSColor(calibratedRed: 0.00, green: 0.878, blue: 1.00, alpha: 1),
+            accent: NSColor(calibratedRed: 0.839, green: 1.00, blue: 0.247, alpha: 1),
+            orange: NSColor(calibratedRed: 0.941, green: 0.267, blue: 0.365, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.185, green: 0.020, blue: 0.055, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.055, green: 0.030, blue: 0.105, alpha: 1),
+            paneOpacity: 0.70,
+            sidebarOpacity: 0.72,
+            styleVariant: .cyberEditorial
+        ),
+        FPThemePreset(
+            title: "Qyvro Aurora",
+            window: NSColor(calibratedRed: 0.055, green: 0.062, blue: 0.075, alpha: 1),
+            pane: NSColor(calibratedRed: 0.105, green: 0.118, blue: 0.138, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.135, green: 0.165, blue: 0.225, alpha: 1),
+            bar: NSColor(calibratedRed: 0.125, green: 0.140, blue: 0.163, alpha: 1),
+            folder: NSColor(calibratedRed: 0.00, green: 0.74, blue: 0.79, alpha: 1),
+            accent: NSColor(calibratedRed: 0.00, green: 0.76, blue: 0.80, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.58, blue: 0.22, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.10, green: 0.13, blue: 0.22, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.035, green: 0.07, blue: 0.09, alpha: 1),
+            paneOpacity: 0.78,
+            sidebarOpacity: 0.34
+        ),
+        FPThemePreset(
+            title: "Глубокий космос",
+            window: NSColor(calibratedRed: 0.040, green: 0.042, blue: 0.062, alpha: 1),
+            pane: NSColor(calibratedRed: 0.082, green: 0.086, blue: 0.120, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.130, green: 0.115, blue: 0.240, alpha: 1),
+            bar: NSColor(calibratedRed: 0.105, green: 0.108, blue: 0.150, alpha: 1),
+            folder: NSColor(calibratedRed: 0.62, green: 0.55, blue: 1.00, alpha: 1),
+            accent: NSColor(calibratedRed: 0.60, green: 0.56, blue: 1.00, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.47, blue: 0.38, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.14, green: 0.11, blue: 0.28, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.03, green: 0.045, blue: 0.075, alpha: 1),
+            paneOpacity: 0.78,
+            sidebarOpacity: 0.30
+        ),
+        FPThemePreset(
+            title: "Графит и янтарь",
+            window: NSColor(calibratedRed: 0.055, green: 0.062, blue: 0.062, alpha: 1),
+            pane: NSColor(calibratedRed: 0.105, green: 0.115, blue: 0.113, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.34, green: 0.15, blue: 0.08, alpha: 1),
+            bar: NSColor(calibratedRed: 0.15, green: 0.16, blue: 0.158, alpha: 1),
+            folder: NSColor(calibratedRed: 0.00, green: 0.68, blue: 0.69, alpha: 1),
+            accent: NSColor(calibratedRed: 0.00, green: 0.68, blue: 0.69, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.49, blue: 0.14, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.24, green: 0.115, blue: 0.06, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.035, green: 0.09, blue: 0.085, alpha: 1),
+            paneOpacity: 0.78,
+            sidebarOpacity: 0.32
+        ),
+        FPThemePreset(
+            title: "Ночной изумруд",
+            window: NSColor(calibratedRed: 0.035, green: 0.065, blue: 0.058, alpha: 1),
+            pane: NSColor(calibratedRed: 0.075, green: 0.115, blue: 0.103, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.07, green: 0.25, blue: 0.20, alpha: 1),
+            bar: NSColor(calibratedRed: 0.09, green: 0.14, blue: 0.13, alpha: 1),
+            folder: NSColor(calibratedRed: 0.15, green: 0.78, blue: 0.62, alpha: 1),
+            accent: NSColor(calibratedRed: 0.12, green: 0.78, blue: 0.64, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.57, blue: 0.20, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.055, green: 0.23, blue: 0.18, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.035, green: 0.055, blue: 0.052, alpha: 1),
+            paneOpacity: 0.76,
+            sidebarOpacity: 0.30
+        ),
+        FPThemePreset(
+            title: "Тихий титан",
+            window: NSColor(calibratedRed: 0.075, green: 0.078, blue: 0.080, alpha: 1),
+            pane: NSColor(calibratedRed: 0.145, green: 0.150, blue: 0.150, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.20, green: 0.205, blue: 0.205, alpha: 1),
+            bar: NSColor(calibratedRed: 0.18, green: 0.185, blue: 0.185, alpha: 1),
+            folder: NSColor(calibratedRed: 0.24, green: 0.70, blue: 0.68, alpha: 1),
+            accent: NSColor(calibratedRed: 0.22, green: 0.72, blue: 0.69, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.53, blue: 0.19, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.19, green: 0.205, blue: 0.20, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.065, green: 0.07, blue: 0.072, alpha: 1),
+            paneOpacity: 0.82,
+            sidebarOpacity: 0.28
+        ),
+        FPThemePreset(
+            title: "Бордовый закат",
+            window: NSColor(calibratedRed: 0.095, green: 0.045, blue: 0.050, alpha: 1),
+            pane: NSColor(calibratedRed: 0.145, green: 0.085, blue: 0.082, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.38, green: 0.12, blue: 0.08, alpha: 1),
+            bar: NSColor(calibratedRed: 0.19, green: 0.105, blue: 0.10, alpha: 1),
+            folder: NSColor(calibratedRed: 0.02, green: 0.69, blue: 0.67, alpha: 1),
+            accent: NSColor(calibratedRed: 0.00, green: 0.70, blue: 0.68, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.42, blue: 0.12, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.36, green: 0.10, blue: 0.07, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.075, green: 0.055, blue: 0.06, alpha: 1),
+            paneOpacity: 0.77,
+            sidebarOpacity: 0.34
+        ),
+        FPThemePreset(
+            title: "Жидкий графит",
+            window: NSColor(calibratedRed: 0.045, green: 0.048, blue: 0.052, alpha: 1),
+            pane: NSColor(calibratedRed: 0.105, green: 0.112, blue: 0.118, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.16, green: 0.17, blue: 0.18, alpha: 1),
+            bar: NSColor(calibratedRed: 0.13, green: 0.14, blue: 0.15, alpha: 1),
+            folder: NSColor(calibratedRed: 0.08, green: 0.73, blue: 0.70, alpha: 1),
+            accent: NSColor(calibratedRed: 0.12, green: 0.78, blue: 0.73, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.52, blue: 0.17, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.16, green: 0.17, blue: 0.18, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.035, green: 0.055, blue: 0.055, alpha: 1),
+            paneOpacity: 0.80, sidebarOpacity: 0.27
+        ),
+        FPThemePreset(
+            title: "Северное стекло",
+            window: NSColor(calibratedRed: 0.035, green: 0.055, blue: 0.065, alpha: 1),
+            pane: NSColor(calibratedRed: 0.085, green: 0.12, blue: 0.13, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.08, green: 0.22, blue: 0.22, alpha: 1),
+            bar: NSColor(calibratedRed: 0.10, green: 0.145, blue: 0.15, alpha: 1),
+            folder: NSColor(calibratedRed: 0.26, green: 0.80, blue: 0.67, alpha: 1),
+            accent: NSColor(calibratedRed: 0.30, green: 0.88, blue: 0.73, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.46, blue: 0.28, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.08, green: 0.25, blue: 0.24, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.04, green: 0.055, blue: 0.07, alpha: 1),
+            paneOpacity: 0.76, sidebarOpacity: 0.29
+        ),
+        FPThemePreset(
+            title: "Титановый рассвет",
+            window: NSColor(calibratedRed: 0.075, green: 0.072, blue: 0.078, alpha: 1),
+            pane: NSColor(calibratedRed: 0.15, green: 0.145, blue: 0.15, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.27, green: 0.16, blue: 0.18, alpha: 1),
+            bar: NSColor(calibratedRed: 0.19, green: 0.17, blue: 0.18, alpha: 1),
+            folder: NSColor(calibratedRed: 0.10, green: 0.71, blue: 0.70, alpha: 1),
+            accent: NSColor(calibratedRed: 0.12, green: 0.76, blue: 0.74, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.47, blue: 0.25, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.34, green: 0.15, blue: 0.18, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.07, green: 0.07, blue: 0.085, alpha: 1),
+            paneOpacity: 0.80, sidebarOpacity: 0.31
+        ),
+        FPThemePreset(
+            title: "Чернила и абрикос",
+            window: NSColor(calibratedRed: 0.045, green: 0.040, blue: 0.060, alpha: 1),
+            pane: NSColor(calibratedRed: 0.10, green: 0.09, blue: 0.12, alpha: 1),
+            sidebar: NSColor(calibratedRed: 0.21, green: 0.12, blue: 0.22, alpha: 1),
+            bar: NSColor(calibratedRed: 0.14, green: 0.12, blue: 0.16, alpha: 1),
+            folder: NSColor(calibratedRed: 0.08, green: 0.70, blue: 0.70, alpha: 1),
+            accent: NSColor(calibratedRed: 0.13, green: 0.78, blue: 0.75, alpha: 1),
+            orange: NSColor(calibratedRed: 1.00, green: 0.58, blue: 0.31, alpha: 1),
+            gradientStart: NSColor(calibratedRed: 0.25, green: 0.11, blue: 0.24, alpha: 1),
+            gradientEnd: NSColor(calibratedRed: 0.04, green: 0.055, blue: 0.07, alpha: 1),
+            paneOpacity: 0.78, sidebarOpacity: 0.30
+        )
+    ]
+}
+
+final class FPThemePresetController: NSObject {
+    let windowColor: NSColorWell
+    let paneColor: NSColorWell
+    let sidebarColor: NSColorWell
+    let barColor: NSColorWell
+    let folderColor: NSColorWell
+    let accentColor: NSColorWell
+    let orangeColor: NSColorWell
+    let gradientStartColor: NSColorWell
+    let gradientEndColor: NSColorWell
+    let paneOpacity: NSSlider
+    let sidebarOpacity: NSSlider
+
+    init(
+        windowColor: NSColorWell,
+        paneColor: NSColorWell,
+        sidebarColor: NSColorWell,
+        barColor: NSColorWell,
+        folderColor: NSColorWell,
+        accentColor: NSColorWell,
+        orangeColor: NSColorWell,
+        gradientStartColor: NSColorWell,
+        gradientEndColor: NSColorWell,
+        paneOpacity: NSSlider,
+        sidebarOpacity: NSSlider
+    ) {
+        self.windowColor = windowColor
+        self.paneColor = paneColor
+        self.sidebarColor = sidebarColor
+        self.barColor = barColor
+        self.folderColor = folderColor
+        self.accentColor = accentColor
+        self.orangeColor = orangeColor
+        self.gradientStartColor = gradientStartColor
+        self.gradientEndColor = gradientEndColor
+        self.paneOpacity = paneOpacity
+        self.sidebarOpacity = sidebarOpacity
+    }
+
+    @objc func presetChanged(_ sender: NSPopUpButton) {
+        let index = sender.indexOfSelectedItem - 1
+        guard index >= 0, index < FPThemePreset.all.count else { return }
+        let preset = FPThemePreset.all[index]
+        windowColor.color = preset.window
+        paneColor.color = preset.pane
+        sidebarColor.color = preset.sidebar
+        barColor.color = preset.bar
+        folderColor.color = preset.folder
+        accentColor.color = preset.accent
+        orangeColor.color = preset.orange
+        gradientStartColor.color = preset.gradientStart
+        gradientEndColor.color = preset.gradientEnd
+        paneOpacity.doubleValue = preset.paneOpacity
+        sidebarOpacity.doubleValue = preset.sidebarOpacity
+    }
+}
+
+extension Notification.Name {
+    static let fpThemeDidChange = Notification.Name("FPThemeDidChange")
+    static let fpTagsDidChange = Notification.Name("FPTagsDidChange")
+}
+
+struct FPTag {
+    let title: String
+    let key: String
+    let color: NSColor
+
+    static let builtIn: [FPTag] = [
+        FPTag(title: "Красный", key: "red", color: NSColor(calibratedRed: 1.00, green: 0.27, blue: 0.25, alpha: 1)),
+        FPTag(title: "Оранжевый", key: "orange", color: FPStyle.orange),
+        FPTag(title: "Жёлтый", key: "yellow", color: NSColor(calibratedRed: 1.00, green: 0.84, blue: 0.02, alpha: 1)),
+        FPTag(title: "Зелёный", key: "green", color: NSColor(calibratedRed: 0.10, green: 0.86, blue: 0.35, alpha: 1)),
+        FPTag(title: "Синий", key: "blue", color: NSColor(calibratedRed: 0.08, green: 0.58, blue: 0.92, alpha: 1)),
+        FPTag(title: "Лиловый", key: "purple", color: NSColor(calibratedRed: 0.78, green: 0.32, blue: 0.92, alpha: 1)),
+        FPTag(title: "Серый", key: "gray", color: NSColor(calibratedWhite: 0.68, alpha: 1))
+    ]
+
+    static var all: [FPTag] { FPTagStore.shared.tags }
+
+    static func color(for key: String) -> NSColor? {
+        all.first(where: { $0.key == key })?.color
+    }
+}
+
+private struct FPTagRecord: Codable {
+    var title: String
+    var key: String
+    var red: Double
+    var green: Double
+    var blue: Double
+
+    init(tag: FPTag) {
+        let color = tag.color.usingColorSpace(.deviceRGB) ?? tag.color
+        title = tag.title
+        key = tag.key
+        red = Double(color.redComponent)
+        green = Double(color.greenComponent)
+        blue = Double(color.blueComponent)
+    }
+
+    var tag: FPTag {
+        FPTag(title: title, key: key, color: NSColor(calibratedRed: red, green: green, blue: blue, alpha: 1))
+    }
+}
+
+final class FPTagStore {
+    static let shared = FPTagStore()
+    private let defaultsKey = "QyvroTagDefinitionsV1"
+
+    var tags: [FPTag] {
+        guard let data = UserDefaults.standard.data(forKey: defaultsKey),
+              let records = try? JSONDecoder().decode([FPTagRecord].self, from: data),
+              !records.isEmpty else { return FPTag.builtIn }
+        return records.map(\.tag)
+    }
+
+    func add(title: String, color: NSColor) {
+        var values = tags
+        values.append(FPTag(title: title, key: "custom-\(UUID().uuidString)", color: color))
+        save(values)
+    }
+
+    func update(key: String, title: String, color: NSColor) {
+        var values = tags
+        guard let index = values.firstIndex(where: { $0.key == key }) else { return }
+        values[index] = FPTag(title: title, key: key, color: color)
+        save(values)
+    }
+
+    func remove(key: String) {
+        let remaining = tags.filter { $0.key != key }
+        guard !remaining.isEmpty else { return }
+        save(remaining)
+        var assignments = UserDefaults.standard.dictionary(forKey: "FolderColors") as? [String: String] ?? [:]
+        assignments = assignments.filter { $0.value != key }
+        UserDefaults.standard.set(assignments, forKey: "FolderColors")
+    }
+
+    func key(for finderTag: FPFinderTag) -> String {
+        let foldedTitle = finderTag.title.folding(
+            options: [.caseInsensitive, .diacriticInsensitive],
+            locale: .current
+        )
+        if let existing = tags.first(where: {
+            $0.title.folding(
+                options: [.caseInsensitive, .diacriticInsensitive],
+                locale: .current
+            ) == foldedTitle
+        }) {
+            return existing.key
+        }
+
+        var values = tags
+        let imported = FPTag(
+            title: finderTag.title,
+            key: "finder-\(UUID().uuidString)",
+            color: FPFinderTagStore.color(forFinderNumber: finderTag.colorNumber)
+        )
+        values.append(imported)
+        save(values)
+        return imported.key
+    }
+
+    private func save(_ values: [FPTag]) {
+        guard let data = try? JSONEncoder().encode(values.map(FPTagRecord.init)) else { return }
+        UserDefaults.standard.set(data, forKey: defaultsKey)
+        NotificationCenter.default.post(name: .fpTagsDidChange, object: nil)
+    }
+}

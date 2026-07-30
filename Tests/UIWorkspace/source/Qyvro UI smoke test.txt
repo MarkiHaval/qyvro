@@ -1,0 +1,1 @@
+Qyvro 1.1 UI smoke test fixture.

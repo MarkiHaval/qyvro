@@ -1,0 +1,13 @@
+.DS_Store
+._*
+
+# Собранные артефакты — восстанавливаются из build_app.sh, в истории не нужны
+Releases/*.zip
+Releases/*.dmg
+Releases/Qyvro-macOS-Universal-*/
+*.app/
+
+# Локальные сборки
+build/
+.build/
+DerivedData/
