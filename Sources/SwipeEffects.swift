@@ -737,7 +737,13 @@ final class SwipeSurfaceWaveView: NSView {
                 samplesPerPixel: 4,
                 hasAlpha: true,
                 isPlanar: false,
-                colorSpaceName: .calibratedRGB,
+                // deviceRGB — это собственное пространство подложки окна, то
+                // же, в котором AppKit рисует живую сетку и «крайние» снимки.
+                // calibratedRGB добавлял лишний круг «профиль дисплея →
+                // generic RGB → рабочее пространство → профиль дисплея»: на
+                // краях перехода снимок и живая сетка расходились по яркости
+                // и насыщенности, и подмена одного другим читалась вспышкой.
+                colorSpaceName: .deviceRGB,
                 bytesPerRow: 0,
                 bitsPerPixel: 0
             ) else { continue }
@@ -745,12 +751,14 @@ final class SwipeSurfaceWaveView: NSView {
             view.displayIfNeeded()
             view.cacheDisplay(in: rect, to: representation)
             if let image = representation.cgImage {
-                // Раньше исходник насильно помечался как sRGB, хотя пиксели
-                // рисовались в calibrated RGB. Из-за неверной метки все GPU-кадры
-                // получали лёгкий сдвиг тона относительно живой сетки — он и
-                // читался как мерцание при входе и выходе из волны. Правильная
-                // метка позволяет Core Image самому выполнить точную конверсию.
-                return CIImage(cgImage: image)
+                // Метка обязана совпадать с тем, в чём пиксели нарисованы на
+                // самом деле, иначе Core Image конвертирует их из неверного
+                // пространства и все GPU-кадры уезжают по тону относительно
+                // живой сетки. deviceRGB подложки — это профиль окна.
+                return CIImage(
+                    cgImage: image,
+                    options: [.colorSpace: presentationColorSpace]
+                )
             }
         }
         return nil
