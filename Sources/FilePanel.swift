@@ -1056,7 +1056,27 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             }
             return self.selectedItems.map(\.url)
         }
+        cell.onToggleFlag = { [weak self] selectedIndex in
+            self?.toggleFlag(at: selectedIndex)
+        }
         return cell
+    }
+
+    /// Отметка щелчком по звёздочке в углу плитки — для случаев, когда
+    /// открывать превью ради одного файла не хочется.
+    private func toggleFlag(at index: Int) {
+        guard filteredItems.indices.contains(index) else { return }
+        let item = filteredItems[index]
+        guard !item.isDirectory else { return }
+        let flagged = FPFinderTagStore.isFlagged(item.finderTags ?? [])
+        do {
+            try FPFinderTagStore.setFlag(!flagged, on: item.url)
+        } catch {
+            showError("Не удалось изменить отметку: \(error.localizedDescription)")
+            return
+        }
+        DirectorySnapshotCache.shared.invalidate(currentURL)
+        loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
     }
 
     private func clearGridViews() {
@@ -2794,6 +2814,18 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         if selected > 0 {
             text += " - выбрано \(selected)"
         }
+        // Счёт идёт по дате изменения файла: отметка ставится в момент
+        // разбора, поэтому «отмечено сегодня» и «разобрано сегодня» — это про
+        // одни и те же файлы. Считается по видимой папке, без обхода диска.
+        let flaggedToday = filteredItems.filter { item in
+            guard !item.isDirectory,
+                  FPFinderTagStore.isFlagged(item.finderTags ?? []),
+                  let modified = item.modified else { return false }
+            return Calendar.current.isDateInToday(modified)
+        }.count
+        if flaggedToday > 0 {
+            text += " - ★ сегодня: \(flaggedToday)"
+        }
         return text
     }
 
@@ -3794,9 +3826,27 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     ///
     /// Отдельными пунктами первого уровня, а не внутри «Открыть с помощью»:
     /// в ежедневной работе это два клика против четырёх.
-    private static let creativeApps: [(title: String, bundleIdentifiers: [String])] = [
-        ("Открыть в Photoshop", ["com.adobe.Photoshop"]),
-        ("Открыть в Premiere Pro", ["com.adobe.PremierePro", "com.adobe.AfterEffects"])
+    private static let photoshopExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "tif", "tiff", "psd", "psb", "heic", "heif",
+        "webp", "gif", "bmp", "raw", "dng", "cr2", "nef", "arw"
+    ]
+    /// Premiere принимает и кадры, и видео — раскадровки и футаж живут в
+    /// одном проекте.
+    private static let premiereExtensions: Set<String> =
+        photoshopExtensions.union([
+            "mp4", "mov", "m4v", "avi", "mkv", "mxf", "mpg", "mpeg",
+            "wav", "mp3", "aac", "aif", "aiff"
+        ])
+
+    private static let creativeApps: [
+        (title: String, bundleIdentifiers: [String], extensions: Set<String>)
+    ] = [
+        ("Открыть в Photoshop", ["com.adobe.Photoshop"], photoshopExtensions),
+        (
+            "Открыть в Premiere Pro",
+            ["com.adobe.PremierePro", "com.adobe.AfterEffects"],
+            premiereExtensions
+        )
     ]
 
     private func installedCreativeApp(matching identifiers: [String]) -> URL? {
@@ -4040,12 +4090,20 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             menu.setSubmenu(convertMenu, for: convertItem)
             menu.addItem(convertItem)
         }
-        if selectedItems.contains(where: { !$0.isDirectory }) {
+        let selectedFiles = selectedItems.filter { !$0.isDirectory }
+        if !selectedFiles.isEmpty {
             var addedCreativeApp = false
             for app in Self.creativeApps {
-                guard let applicationURL = installedCreativeApp(
-                    matching: app.bundleIdentifiers
-                ) else { continue }
+                // Пункт появляется, только если приложение действительно
+                // откроет всё выделенное. Иначе видео можно было отправить в
+                // Photoshop одним промахом мыши.
+                let allSupported = selectedFiles.allSatisfy {
+                    app.extensions.contains($0.url.pathExtension.lowercased())
+                }
+                guard allSupported,
+                      let applicationURL = installedCreativeApp(
+                          matching: app.bundleIdentifiers
+                      ) else { continue }
                 let item = menu.addItem(
                     withTitle: app.title,
                     action: #selector(openSelectionInCreativeApp(_:)),

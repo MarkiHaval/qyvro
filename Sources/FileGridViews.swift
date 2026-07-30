@@ -573,6 +573,7 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     var onOpen: (() -> Void)?
     var onMenu: (() -> NSMenu?)?
     var onDrag: ((Int) -> [URL])?
+    var onToggleFlag: ((Int) -> Void)?
 
     init() {
         super.init(
@@ -652,8 +653,15 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     func setPointerHover(_ hovered: Bool, animated: Bool = true) {
         guard hovered != isHoveredState else { return }
         isHoveredState = hovered
+        updateFlagBadgeVisibility()
         applyChrome(animated: animated)
         animateIconScale(hovered ? 1.05 : 1.0, animated: animated)
+    }
+
+    /// Отмеченные файлы носят звёздочку всегда, остальные показывают её
+    /// только под курсором: иначе сетка рябит от значков на каждой плитке.
+    private func updateFlagBadgeVisibility() {
+        flagBadge.isHidden = !(flagBadge.isFlagged || isHoveredState)
     }
 
     // Лёгкий «подъём» иконки при наведении: масштаб считается вокруг центра
@@ -768,6 +776,10 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
 
         flagBadge.translatesAutoresizingMaskIntoConstraints = false
         flagBadge.isHidden = true
+        flagBadge.onToggle = { [weak self] in
+            guard let self else { return }
+            self.onToggleFlag?(self.itemIndex)
+        }
 
         addSubview(previewImageView)
         addSubview(titleField)
@@ -834,7 +846,8 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
                 self.kindField.stringValue = FPTileCaption.text(for: item, media: info)
             }
         }
-        flagBadge.isHidden = !FPFinderTagStore.isFlagged(item.finderTags ?? [])
+        flagBadge.isFlagged = FPFinderTagStore.isFlagged(item.finderTags ?? [])
+        updateFlagBadgeVisibility()
         toolTip = hoverTooltip(for: item)
         setAccessibilityLabel(item.name)
         setAccessibilityHelp(item.isDirectory ? "Открыть папку" : "Открыть файл")
@@ -1248,17 +1261,30 @@ final class FileInspectorController: NSWindowController {
 /// звездой, иначе на светлых кадрах отметка теряется. Цвет берётся из темы,
 /// поэтому значок следует за палитрой проводника.
 final class FPSelectedFlagBadge: NSView {
+    /// Отмечен ли файл. Когда нет — значок показывается только под курсором
+    /// и приглушённо, чтобы сетка не рябила от звёздочек.
+    var isFlagged = false {
+        didSet { needsDisplay = true }
+    }
+    var onToggle: (() -> Void)?
+
     override var wantsUpdateLayer: Bool { false }
 
-    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onToggle?()
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         let inset = bounds.insetBy(dx: 1, dy: 1)
         let circle = NSBezierPath(ovalIn: inset)
 
-        NSColor.black.withAlphaComponent(0.55).setFill()
+        NSColor.black.withAlphaComponent(isFlagged ? 0.55 : 0.42).setFill()
         NSBezierPath(ovalIn: bounds).fill()
-        FPStyle.orange.setFill()
+        (isFlagged ? FPStyle.orange : NSColor.white.withAlphaComponent(0.34)).setFill()
         circle.fill()
 
         let star = NSBezierPath()
@@ -1275,7 +1301,7 @@ final class FPSelectedFlagBadge: NSView {
             step == 0 ? star.move(to: point) : star.line(to: point)
         }
         star.close()
-        NSColor.black.withAlphaComponent(0.82).setFill()
+        NSColor.black.withAlphaComponent(isFlagged ? 0.82 : 0.55).setFill()
         star.fill()
     }
 }
