@@ -556,6 +556,8 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     private let previewImageView = NSImageView()
     private let titleField = NSTextField(labelWithString: "")
     private let kindField = NSTextField(labelWithString: "")
+    /// Звёздочка «отобрано» в углу миниатюры.
+    private let flagBadge = FPSelectedFlagBadge()
     private var previewWidthConstraint: NSLayoutConstraint!
     private var previewHeightConstraint: NSLayoutConstraint!
     private var mouseDownPoint: NSPoint?
@@ -764,9 +766,13 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
             : .systemFont(ofSize: 10.5, weight: .medium)
         kindField.textColor = FPStyle.dimText.withAlphaComponent(0.88)
 
+        flagBadge.translatesAutoresizingMaskIntoConstraints = false
+        flagBadge.isHidden = true
+
         addSubview(previewImageView)
         addSubview(titleField)
         addSubview(kindField)
+        addSubview(flagBadge)
 
         previewWidthConstraint = previewImageView.widthAnchor.constraint(equalToConstant: 64)
         previewHeightConstraint = previewImageView.heightAnchor.constraint(equalToConstant: 64)
@@ -776,6 +782,12 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
             previewImageView.centerXAnchor.constraint(equalTo: centerXAnchor),
             previewWidthConstraint,
             previewHeightConstraint,
+            // Правый верхний угол миниатюры: не перекрывает ни подпись, ни
+            // цветной кружок метки, который живёт слева.
+            flagBadge.trailingAnchor.constraint(equalTo: previewImageView.trailingAnchor, constant: 3),
+            flagBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor, constant: -3),
+            flagBadge.widthAnchor.constraint(equalToConstant: 18),
+            flagBadge.heightAnchor.constraint(equalToConstant: 18),
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             titleField.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 4),
@@ -811,14 +823,18 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         kindField.font = FPStyle.isCyberEditorial
             ? .monospacedSystemFont(ofSize: 9.5, weight: .medium)
             : .systemFont(ofSize: 10.5, weight: .medium)
-        if item.isDirectory {
-            kindField.stringValue = "Папка"
-        } else if let size = item.size {
-            let formattedSize = ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
-            kindField.stringValue = "\(item.kind)  •  \(formattedSize)"
-        } else {
-            kindField.stringValue = item.kind
+        // Разрешение читается из заголовка файла в фоне: в папке на полторы
+        // тысячи объектов синхронный разбор подвесил бы прокрутку. Пока оно
+        // едет, подпись показывает то же, что и раньше, без прыжков высоты.
+        let cachedMedia = FPMediaInfoCache.cached(for: item.url, modified: item.modified)
+        kindField.stringValue = FPTileCaption.text(for: item, media: cachedMedia)
+        if cachedMedia == nil, !item.isDirectory {
+            FPMediaInfoCache.load(for: item.url, modified: item.modified) { [weak self] info in
+                guard let self, self.representedPath == path else { return }
+                self.kindField.stringValue = FPTileCaption.text(for: item, media: info)
+            }
         }
+        flagBadge.isHidden = !FPFinderTagStore.isFlagged(item.finderTags ?? [])
         toolTip = hoverTooltip(for: item)
         setAccessibilityLabel(item.name)
         setAccessibilityHelp(item.isDirectory ? "Открыть папку" : "Открыть файл")
@@ -1223,6 +1239,44 @@ final class FileInspectorController: NSWindowController {
               let width = properties[kCGImagePropertyPixelWidth] as? Int,
               let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
         return (width, height)
+    }
+}
+
+/// Звёздочка «отобрано» в углу миниатюры.
+///
+/// Рисуется вручную, а не иконкой SF Symbols: нужен контрастный кружок под
+/// звездой, иначе на светлых кадрах отметка теряется. Цвет берётся из темы,
+/// поэтому значок следует за палитрой проводника.
+final class FPSelectedFlagBadge: NSView {
+    override var wantsUpdateLayer: Bool { false }
+
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let inset = bounds.insetBy(dx: 1, dy: 1)
+        let circle = NSBezierPath(ovalIn: inset)
+
+        NSColor.black.withAlphaComponent(0.55).setFill()
+        NSBezierPath(ovalIn: bounds).fill()
+        FPStyle.orange.setFill()
+        circle.fill()
+
+        let star = NSBezierPath()
+        let center = NSPoint(x: inset.midX, y: inset.midY)
+        let outer = inset.width * 0.34
+        let inner = outer * 0.42
+        for step in 0..<10 {
+            let radius = step % 2 == 0 ? outer : inner
+            let angle = .pi / 2 + CGFloat(step) * .pi / 5
+            let point = NSPoint(
+                x: center.x + cos(angle) * radius,
+                y: center.y + sin(angle) * radius
+            )
+            step == 0 ? star.move(to: point) : star.line(to: point)
+        }
+        star.close()
+        NSColor.black.withAlphaComponent(0.82).setFill()
+        star.fill()
     }
 }
 

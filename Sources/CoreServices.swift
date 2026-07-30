@@ -2,6 +2,7 @@ import Cocoa
 import ImageIO
 import UniformTypeIdentifiers
 import CoreImage
+import AVFoundation
 import Carbon.HIToolbox
 let appDisplayName = "Qyvro"
 
@@ -159,6 +160,158 @@ enum FPImageConverter {
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: message]
         )
+    }
+}
+
+/// Разрешение и длительность файла для подписи под плиткой.
+///
+/// Читается вне главного потока и кэшируется: в папке на полторы тысячи
+/// файлов синхронный разбор заголовков подвесил бы прокрутку. Ключ кэша
+/// включает дату изменения, поэтому пересохранённый файл читается заново.
+struct FPMediaInfo {
+    let pixelWidth: Int
+    let pixelHeight: Int
+    /// Секунды; заполняется только для видео и звука.
+    let duration: Double?
+
+    var pixelSizeText: String { "\(pixelWidth)×\(pixelHeight)" }
+
+    var durationText: String? {
+        guard let duration, duration.isFinite, duration >= 1 else { return nil }
+        let total = Int(duration.rounded())
+        let hours = total / 3_600
+        let minutes = (total % 3_600) / 60
+        let seconds = total % 60
+        return hours > 0
+            ? String(format: "%d:%02d:%02d", hours, minutes, seconds)
+            : String(format: "%d:%02d", minutes, seconds)
+    }
+}
+
+/// Подпись под плиткой: тип, разрешение, длительность, вес — одной строкой.
+///
+/// Разрешение встаёт на место слова «Изображение»: строка остаётся одна,
+/// высота плитки не меняется, а число, по которому идёт вся работа с
+/// лимитами сервисов, видно без захода в свойства.
+enum FPTileCaption {
+    static func shortKind(for item: FileItem) -> String {
+        let ext = item.url.pathExtension.uppercased()
+        return ext.isEmpty ? item.kind : ext
+    }
+
+    static func text(for item: FileItem, media: FPMediaInfo?) -> String {
+        if item.isDirectory { return "Папка" }
+        var parts = [shortKind(for: item)]
+        if let media {
+            parts.append(media.pixelSizeText)
+            if let duration = media.durationText { parts.append(duration) }
+        }
+        if let size = item.size {
+            parts.append(ByteCountFormatter.string(fromByteCount: size, countStyle: .file))
+        }
+        return parts.joined(separator: "  •  ")
+    }
+}
+
+enum FPMediaInfoCache {
+    private static let lock = NSLock()
+    private static var storage: [String: FPMediaInfo] = [:]
+    private static var inFlight: Set<String> = []
+    private static let queue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 2
+        queue.qualityOfService = .utility
+        return queue
+    }()
+
+    static let imageExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "heic", "heif", "tif", "tiff", "webp", "gif", "bmp"
+    ]
+    static let movieExtensions: Set<String> = [
+        "mp4", "mov", "m4v", "avi", "mkv", "webm"
+    ]
+
+    static func isSupported(_ url: URL) -> Bool {
+        let ext = url.pathExtension.lowercased()
+        return imageExtensions.contains(ext) || movieExtensions.contains(ext)
+    }
+
+    private static func key(for url: URL, modified: Date?) -> String {
+        "\(url.standardizedFileURL.path)|\(modified?.timeIntervalSince1970 ?? 0)"
+    }
+
+    static func cached(for url: URL, modified: Date?) -> FPMediaInfo? {
+        let cacheKey = key(for: url, modified: modified)
+        lock.lock()
+        defer { lock.unlock() }
+        return storage[cacheKey]
+    }
+
+    /// Ставит чтение в очередь. `completion` вызывается на главном потоке
+    /// только если что-то удалось прочитать.
+    static func load(
+        for url: URL,
+        modified: Date?,
+        completion: @escaping (FPMediaInfo) -> Void
+    ) {
+        guard isSupported(url) else { return }
+        let cacheKey = key(for: url, modified: modified)
+        lock.lock()
+        if let existing = storage[cacheKey] {
+            lock.unlock()
+            completion(existing)
+            return
+        }
+        guard !inFlight.contains(cacheKey) else {
+            lock.unlock()
+            return
+        }
+        inFlight.insert(cacheKey)
+        lock.unlock()
+
+        queue.addOperation {
+            let info = read(url)
+            lock.lock()
+            inFlight.remove(cacheKey)
+            if let info { storage[cacheKey] = info }
+            lock.unlock()
+            guard let info else { return }
+            DispatchQueue.main.async { completion(info) }
+        }
+    }
+
+    private static func read(_ url: URL) -> FPMediaInfo? {
+        let ext = url.pathExtension.lowercased()
+        if imageExtensions.contains(ext) {
+            // Заголовок читается без декодирования пикселей.
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+                  let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                    as? [CFString: Any],
+                  let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                  let height = properties[kCGImagePropertyPixelHeight] as? Int else { return nil }
+            return FPMediaInfo(pixelWidth: width, pixelHeight: height, duration: nil)
+        }
+        guard movieExtensions.contains(ext) else { return nil }
+        let asset = AVURLAsset(url: url)
+        guard let track = asset.tracks(withMediaType: .video).first else { return nil }
+        // preferredTransform учитывает поворот: вертикальное видео обязано
+        // показываться как 1080×1920, а не как 1920×1080.
+        let natural = track.naturalSize.applying(track.preferredTransform)
+        let width = Int(abs(natural.width).rounded())
+        let height = Int(abs(natural.height).rounded())
+        guard width > 0, height > 0 else { return nil }
+        let seconds = CMTimeGetSeconds(asset.duration)
+        return FPMediaInfo(
+            pixelWidth: width,
+            pixelHeight: height,
+            duration: seconds.isFinite ? seconds : nil
+        )
+    }
+
+    static func removeAll() {
+        lock.lock()
+        storage.removeAll(keepingCapacity: false)
+        lock.unlock()
     }
 }
 

@@ -311,6 +311,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 self.moveQuickLookVertically(panel: panel, direction: 1)  // ↓
             case 126:
                 self.moveQuickLookVertically(panel: panel, direction: -1) // ↑
+            case 51:
+                self.trashCurrentQuickLookItem(panel) // ⌫
+            case 3:
+                self.toggleQuickLookItemFlag(panel)   // F
             default: return event
             }
             return nil
@@ -460,6 +464,79 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         panel.currentPreviewItemIndex = newIndex
         quickLookIndexDidChange(newIndex)
+    }
+
+    /// Разбор пачки: ⌫ отправляет текущий кадр в корзину и сразу показывает
+    /// следующий, не закрывая превью.
+    ///
+    /// Удаление проходит через системную корзину и записывается в историю
+    /// операций, поэтому промах лечится обычной отменой — при скорости
+    /// «пятьдесят картинок за подход» это обязательное условие.
+    private func trashCurrentQuickLookItem(_ panel: QLPreviewPanel) {
+        guard let request = quickLookRequest,
+              request.entries.indices.contains(panel.currentPreviewItemIndex) else {
+            NSSound.beep()
+            return
+        }
+        let index = panel.currentPreviewItemIndex
+        let url = request.entries[index].url
+
+        var resultingURL: NSURL?
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
+        } catch {
+            NSSound.beep()
+            return
+        }
+        if let trashURL = resultingURL as URL? {
+            QyvroFileOperationHistory.shared.recordTrash(
+                [.init(original: url, trashURL: trashURL)]
+            )
+        }
+
+        var entries = request.entries
+        entries.remove(at: index)
+        refreshPanelAfterQuickLookMutation()
+
+        guard !entries.isEmpty else {
+            panel.close()
+            return
+        }
+
+        let nextIndex = min(index, entries.count - 1)
+        quickLookRequest = FPQuickLookRequest(
+            entries: entries,
+            initialIndex: nextIndex,
+            columnCount: request.columnCount,
+            onIndexChanged: request.onIndexChanged
+        )
+        panel.reloadData()
+        panel.currentPreviewItemIndex = nextIndex
+        quickLookIndexDidChange(nextIndex)
+    }
+
+    /// F ставит и снимает отметку «отобрано», не выходя из просмотра.
+    private func toggleQuickLookItemFlag(_ panel: QLPreviewPanel) {
+        guard let request = quickLookRequest,
+              request.entries.indices.contains(panel.currentPreviewItemIndex) else {
+            NSSound.beep()
+            return
+        }
+        let url = request.entries[panel.currentPreviewItemIndex].url
+        let flagged = FPFinderTagStore.isFlagged(url: url)
+        do {
+            try FPFinderTagStore.setFlag(!flagged, on: url)
+        } catch {
+            NSSound.beep()
+            return
+        }
+        refreshPanelAfterQuickLookMutation()
+    }
+
+    /// Сетка под превью должна догнать изменение сразу: значок отметки
+    /// появляется, удалённый файл пропадает.
+    private func refreshPanelAfterQuickLookMutation() {
+        activeWorkspace?.refreshVisiblePanels(force: true)
     }
 
     private func quickLookIndexDidChange(_ index: Int) {

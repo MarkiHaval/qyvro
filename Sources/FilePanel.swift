@@ -3790,6 +3790,57 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         }
     }
 
+    /// Приложения, в которые файлы уходят чаще всего.
+    ///
+    /// Отдельными пунктами первого уровня, а не внутри «Открыть с помощью»:
+    /// в ежедневной работе это два клика против четырёх.
+    private static let creativeApps: [(title: String, bundleIdentifiers: [String])] = [
+        ("Открыть в Photoshop", ["com.adobe.Photoshop"]),
+        ("Открыть в Premiere Pro", ["com.adobe.PremierePro", "com.adobe.AfterEffects"])
+    ]
+
+    private func installedCreativeApp(matching identifiers: [String]) -> URL? {
+        for identifier in identifiers {
+            if let url = NSWorkspace.shared.urlForApplication(
+                withBundleIdentifier: identifier
+            ) {
+                return url
+            }
+        }
+        // Adobe меняет идентификаторы от версии к версии (…Photoshop-2024 и
+        // подобные), поэтому запасной путь — поиск по префиксу имени бандла.
+        guard let prefix = identifiers.first?.split(separator: ".").last.map(String.init) else {
+            return nil
+        }
+        let applicationDirectories = ["/Applications", NSHomeDirectory() + "/Applications"]
+        for directory in applicationDirectories {
+            guard let names = try? fileManager.contentsOfDirectory(atPath: directory) else { continue }
+            if let match = names.first(where: {
+                $0.hasSuffix(".app") && $0.localizedCaseInsensitiveContains(prefix)
+            }) {
+                return URL(fileURLWithPath: directory).appendingPathComponent(match)
+            }
+        }
+        return nil
+    }
+
+    @objc private func openSelectionInCreativeApp(_ sender: NSMenuItem) {
+        guard let applicationURL = sender.representedObject as? URL else {
+            NSSound.beep()
+            return
+        }
+        let urls = selectedItems.filter { !$0.isDirectory }.map(\.url)
+        guard !urls.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        NSWorkspace.shared.open(
+            urls,
+            withApplicationAt: applicationURL,
+            configuration: NSWorkspace.OpenConfiguration()
+        )
+    }
+
     private var selectedResizableImages: [URL] {
         selectedItems
             .filter { !$0.isDirectory && FPImageResizer.isSupported($0.url) }
@@ -3988,6 +4039,25 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             }
             menu.setSubmenu(convertMenu, for: convertItem)
             menu.addItem(convertItem)
+        }
+        if selectedItems.contains(where: { !$0.isDirectory }) {
+            var addedCreativeApp = false
+            for app in Self.creativeApps {
+                guard let applicationURL = installedCreativeApp(
+                    matching: app.bundleIdentifiers
+                ) else { continue }
+                let item = menu.addItem(
+                    withTitle: app.title,
+                    action: #selector(openSelectionInCreativeApp(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = applicationURL
+                item.image = NSWorkspace.shared.icon(forFile: applicationURL.path)
+                item.image?.size = NSSize(width: 16, height: 16)
+                addedCreativeApp = true
+            }
+            if addedCreativeApp { menu.addItem(.separator()) }
         }
         let resizableImages = selectedResizableImages
         if !resizableImages.isEmpty {

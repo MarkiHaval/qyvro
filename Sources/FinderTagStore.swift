@@ -68,7 +68,43 @@ enum FPFinderTagStore {
         return values
     }
 
+    /// Метка «отобрано» — отдельная от цветных.
+    ///
+    /// Живёт настоящей меткой Finder, а не своей базой: переживает
+    /// перемещение и переименование файла, видна в Finder и индексируется
+    /// Spotlight, поэтому выборка «отмечено сегодня» не требует обхода папок.
+    static let selectedFlagTitle = "★ Отобрано"
+    private static let selectedFlagColorNumber = 5 // жёлтый
+
+    static func isFlagged(_ values: [FPFinderTag]) -> Bool {
+        values.contains { normalizedTitle($0.title) == normalizedTitle(selectedFlagTitle) }
+    }
+
+    static func isFlagged(url: URL) -> Bool {
+        isFlagged(tags(for: url))
+    }
+
+    /// Ставит и снимает отметку, не трогая цветную метку файла.
+    @discardableResult
+    static func setFlag(_ flagged: Bool, on url: URL) throws -> [FPFinderTag] {
+        var values = tags(for: url).filter {
+            normalizedTitle($0.title) != normalizedTitle(selectedFlagTitle)
+        }
+        if flagged {
+            values.append(
+                FPFinderTag(title: selectedFlagTitle, colorNumber: selectedFlagColorNumber)
+            )
+        }
+        try write(values, to: url)
+        return values
+    }
+
     static func preferredTag(for url: URL, among values: [FPFinderTag]) -> FPFinderTag? {
+        // Отметка «отобрано» не должна перекрашивать цветной кружок файла:
+        // это независимая ось, у файла может быть и цвет, и отметка.
+        let values = values.filter {
+            normalizedTitle($0.title) != normalizedTitle(selectedFlagTitle)
+        }
         guard !values.isEmpty else { return nil }
         if let managedTitle = managedTitles()[url.standardizedFileURL.path],
            let managed = values.first(where: {
