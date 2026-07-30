@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private var quickLookLastTargetContentSize: NSSize?
     private var quickLookPresentationState: FPQuickLookPresentationState = .windowed
     private var quickLookWindowedAnchorCenter: NSPoint?
+    private var previewWindowController: FPPreviewWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var commandPaletteController: CommandPaletteController?
     private var sessionSaveWorkItem: DispatchWorkItem?
@@ -220,7 +221,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         return primary
     }
 
+    /// Просмотр идёт через собственное окно: в системную панель Quick Look
+    /// нельзя добавить ни значок отметки поверх кадра, ни вторую панель для
+    /// сравнения вариантов.
     private func showQuickLook(_ request: FPQuickLookRequest) {
+        guard !request.entries.isEmpty else { return }
+        let controller = previewWindowController ?? {
+            let created = FPPreviewWindowController()
+            created.onNeedsRefresh = { [weak self] in
+                self?.activeWorkspace?.refreshVisiblePanels(force: true)
+            }
+            previewWindowController = created
+            return created
+        }()
+        controller.present(request)
+    }
+
+    private func showSystemQuickLook(_ request: FPQuickLookRequest) {
         guard !request.entries.isEmpty, let panel = QLPreviewPanel.shared() else { return }
         endQuickLookSession(removeMonitor: false)
         quickLookRequest = request
