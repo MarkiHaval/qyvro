@@ -219,6 +219,12 @@ final class SwipeSurfaceWaveView: NSView {
     private var previousDestinationBlurredImage: CIImage?
     private var destinationCrossfadeStartedAt: CFTimeInterval?
     private var displayTimer: Timer?
+    private var _frameDisplayLink: AnyObject?
+    @available(macOS 14.0, *)
+    private var frameDisplayLink: CADisplayLink? {
+        get { _frameDisplayLink as? CADisplayLink }
+        set { _frameDisplayLink = newValue }
+    }
     private var hiddenViews: [NSView] = []
     private var hiddenViewAlphas: [CGFloat] = []
     private var direction: CGFloat = 1
@@ -247,6 +253,10 @@ final class SwipeSurfaceWaveView: NSView {
     private var hasSwappedToDestinationHold = false
     private var renderInFlight = false
     private var renderGeneration = 0
+    /// Отдельный счётчик для фоновых размытий: `renderGeneration` растёт ещё и
+    /// при каждом новом гребне, а посчитанное размытие при этом остаётся
+    /// действительным.
+    private var blurGeneration = 0
     private var finishRequested = false
 
     override init(frame frameRect: NSRect) {
@@ -296,23 +306,27 @@ final class SwipeSurfaceWaveView: NSView {
         sourceHoldContents = nil
         destinationHoldContents = nil
         renderGeneration += 1
+        blurGeneration += 1
         renderInFlight = false
         finishRequested = false
         captureRect = rect
         view.layoutSubtreeIfNeeded()
         sourceHoldContents = holdSnapshot(of: view, rect: rect)
         sourceImage = snapshot(of: view, rect: rect)
-        guard sourceImage != nil else {
+        guard let capturedSource = sourceImage else {
             sourceHoldContents = nil
             isHidden = true
             return false
         }
-        sourceBlurredImage = gaussianBlurred(sourceImage!)
+        requestBlur(of: capturedSource) { [weak self] blurred in
+            guard let self, self.sourceImage === capturedSource else { return }
+            self.sourceBlurredImage = blurred
+        }
         if let sourceHoldContents {
             layer?.contentsScale = max(CGFloat(sourceHoldContents.width) / max(bounds.width, 1), 1)
             layer?.contents = sourceHoldContents
         } else {
-            layer?.contentsScale = max(sourceImage!.extent.width / max(bounds.width, 1), 1)
+            layer?.contentsScale = max(capturedSource.extent.width / max(bounds.width, 1), 1)
             layer?.contents = nil
         }
         hiddenViews = views
@@ -337,11 +351,10 @@ final class SwipeSurfaceWaveView: NSView {
         view.layoutSubtreeIfNeeded()
         destinationHoldContents = holdSnapshot(of: view, rect: captureRect)
         let capturedDestination = snapshot(of: view, rect: captureRect)
-        let capturedBlurred = capturedDestination.map(gaussianBlurred)
         let now = CACurrentMediaTime()
         if destinationImage == nil {
             destinationImage = capturedDestination
-            destinationBlurredImage = capturedBlurred
+            destinationBlurredImage = nil
             if capturedDestination != nil, !wavePulses.isEmpty {
                 destinationReadyAt = now
                 destinationBlend = 0
@@ -350,8 +363,14 @@ final class SwipeSurfaceWaveView: NSView {
             previousDestinationImage = destinationImage
             previousDestinationBlurredImage = destinationBlurredImage
             destinationImage = capturedDestination
-            destinationBlurredImage = capturedBlurred
+            destinationBlurredImage = nil
             destinationCrossfadeStartedAt = now
+        }
+        if let capturedDestination {
+            requestBlur(of: capturedDestination) { [weak self] blurred in
+                guard let self, self.destinationImage === capturedDestination else { return }
+                self.destinationBlurredImage = blurred
+            }
         }
         hiddenViews.forEach { $0.alphaValue = 0 }
         alphaValue = previousAlpha
@@ -712,9 +731,12 @@ final class SwipeSurfaceWaveView: NSView {
         return representation.cgImage
     }
 
-    private func gaussianBlurred(_ image: CIImage) -> CIImage {
-        let scale = max(image.extent.width / max(bounds.width, 1), 1)
-        let strength = CGFloat(FPPreferences.swipeWaveBlur)
+    private static func gaussianBlurred(
+        _ image: CIImage,
+        boundsWidth: CGFloat,
+        strength: CGFloat
+    ) -> CIImage {
+        let scale = max(image.extent.width / max(boundsWidth, 1), 1)
         let radius = (4.5 + strength * 25.0) * scale
         let blurred = image
             .clampedToExtent()
@@ -724,16 +746,64 @@ final class SwipeSurfaceWaveView: NSView {
         // made Core Image recompute two wide blurs for every animation frame.
         // A cached bitmap gives the custom kernel the same visual result with
         // four cheap texture reads instead.
-        guard let bitmap = Self.context.createCGImage(
+        guard let bitmap = context.createCGImage(
             blurred,
             from: image.extent,
             format: .RGBA8,
-            colorSpace: Self.outputColorSpace
+            colorSpace: outputColorSpace
         ) else { return blurred }
-        return CIImage(cgImage: bitmap, options: [.colorSpace: Self.outputColorSpace])
+        return CIImage(cgImage: bitmap, options: [.colorSpace: outputColorSpace])
     }
 
+    /// Считает размытие вне главного потока и подставляет его, когда готово.
+    ///
+    /// `createCGImage` материализует Gaussian синхронно: два таких вызова на
+    /// каждую навигацию (исходная папка и папка назначения) блокировали главный
+    /// поток на десятки миллисекунд ровно в момент начала перехода — отсюда
+    /// пропуск кадров тем чаще, чем быстрее листаешь.
+    ///
+    /// Подмена безопасна визуально: вклад размытия пропорционален
+    /// `motion = pow(sin(π·progress), …)`, то есть в первых кадрах он ровно
+    /// нулевой. Размытие успевает приехать задолго до того, как станет видимым.
+    private func requestBlur(
+        of image: CIImage,
+        assign: @escaping (CIImage) -> Void
+    ) {
+        let boundsWidth = bounds.width
+        let strength = CGFloat(FPPreferences.swipeWaveBlur)
+        let generation = blurGeneration
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let blurred = Self.gaussianBlurred(
+                image,
+                boundsWidth: boundsWidth,
+                strength: strength
+            )
+            DispatchQueue.main.async {
+                guard let self, self.blurGeneration == generation else { return }
+                assign(blurred)
+                if !self.hasSwappedToDestinationHold, self.animationStartedAt != nil {
+                    self.needsDisplay = true
+                }
+            }
+        }
+    }
+
+    /// Кадры анимации должны выдаваться в такт обновлению экрана.
+    ///
+    /// Раньше здесь стоял `Timer` на 1/60 с допуском 1/240. Он не привязан к
+    /// вертикальной синхронизации: часть кадров попадала в composite-окно
+    /// раньше, часть позже, и волна шла рывками даже когда GPU успевал всё
+    /// посчитать. На ProMotion-дисплее с плавающей частотой расхождение ещё
+    /// заметнее. `CADisplayLink` выдаёт ровно один тик на кадр конкретного
+    /// экрана, поэтому шаг анимации становится равномерным.
     private func startTimer() {
+        if #available(macOS 14.0, *) {
+            guard frameDisplayLink == nil else { return }
+            let link = displayLink(target: self, selector: #selector(handleDisplayLinkTick))
+            link.add(to: .main, forMode: .common)
+            frameDisplayLink = link
+            return
+        }
         guard displayTimer == nil else { return }
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in self?.tick() }
         timer.tolerance = 1.0 / 240.0
@@ -741,7 +811,15 @@ final class SwipeSurfaceWaveView: NSView {
         RunLoop.main.add(timer, forMode: .common)
     }
 
+    @objc private func handleDisplayLinkTick() {
+        tick()
+    }
+
     private func stopTimer() {
+        if #available(macOS 14.0, *) {
+            frameDisplayLink?.invalidate()
+            frameDisplayLink = nil
+        }
         displayTimer?.invalidate()
         displayTimer = nil
     }
@@ -840,6 +918,7 @@ final class SwipeSurfaceWaveView: NSView {
     private func hideImmediately() {
         stopTimer()
         renderGeneration += 1
+        blurGeneration += 1
         renderInFlight = false
         finishRequested = false
         layer?.removeAllAnimations()

@@ -1073,7 +1073,14 @@ final class HorizontalSwipeTracker {
     private var beganSent = false
     private var didTrigger = false
     private var axis: GestureAxis = .undecided
-    private var consumeMomentumUntil = Date.distantPast
+    /// Ось завершившегося жеста; живёт ровно столько, сколько идёт его инерция.
+    ///
+    /// Раньше инерция гасилась по таймеру на 0.12 с, а macOS после резкого
+    /// флика шлёт momentum-события ещё секунду-две. Остаток горизонтальной
+    /// инерции проходил насквозь в NSScrollView и уводил сетку вбок под
+    /// оверлеем: к моменту передачи кадра живая сетка стояла не там, где
+    /// показанный снимок, и переход заканчивался рывком.
+    private var momentumAxis: GestureAxis = .undecided
 
     func handle(
         _ event: NSEvent,
@@ -1083,9 +1090,10 @@ final class HorizontalSwipeTracker {
         action: (CGFloat) -> Void
     ) -> Bool {
         if event.momentumPhase != [] {
-            let shouldConsume = axis == .horizontal || Date() < consumeMomentumUntil
+            let shouldConsume = axis == .horizontal || momentumAxis == .horizontal
             if event.momentumPhase == .ended || event.momentumPhase == .cancelled {
                 axis = .undecided
+                momentumAxis = .undecided
             }
             return shouldConsume
         }
@@ -1099,6 +1107,9 @@ final class HorizontalSwipeTracker {
             beganSent = false
             didTrigger = false
             axis = .undecided
+            // Новый жест отменяет инерцию предыдущего — macOS в этот момент
+            // и сама обрывает momentum-поток.
+            momentumAxis = .undecided
         }
 
         guard event.hasPreciseScrollingDeltas else { return false }
@@ -1132,6 +1143,7 @@ final class HorizontalSwipeTracker {
 
         if axis == .vertical {
             if isEnding {
+                momentumAxis = .vertical
                 accumulatedX = 0
                 accumulatedY = 0
                 beganSent = false
@@ -1167,7 +1179,9 @@ final class HorizontalSwipeTracker {
                 action(accumulatedX)
             }
             completion?(committed)
-            consumeMomentumUntil = Date().addingTimeInterval(0.12)
+            // Инерцию этого жеста гасим целиком — до её собственного
+            // momentumPhase == .ended, а не по фиксированному таймауту.
+            momentumAxis = .horizontal
             accumulatedX = 0
             accumulatedY = 0
             beganSent = false
