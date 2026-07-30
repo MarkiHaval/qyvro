@@ -162,6 +162,132 @@ enum FPImageConverter {
     }
 }
 
+/// Уменьшение картинок до заданной длинной стороны.
+///
+/// Пропорции сохраняются, оригинал не трогается — результат кладётся рядом с
+/// суффиксом `_maxN`. Работа идёт через `sips`, как в исходной утилите
+/// MaxSide5999: он умеет все растровые форматы, которые показывает Qyvro,
+/// включая те, для которых у Core Image нет писателя (webp, gif).
+enum FPImageResizer {
+    /// Готовые пресеты для подменю. 5999 — исходный сценарий: многие стоки и
+    /// соцсети отклоняют изображения от 6000px по любой стороне.
+    static let presetMaxSides: [Int] = [5999, 4096, 2560, 2048, 1024]
+
+    static let supportedExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "heic", "heif", "tif", "tiff", "webp", "gif", "bmp"
+    ]
+
+    struct Outcome {
+        var resized: [URL] = []
+        /// Файлы, которые и так были не больше лимита.
+        var skipped: [String] = []
+        var failed: [String] = []
+    }
+
+    private static let queue = DispatchQueue(label: "Qyvro.ImageResize", qos: .userInitiated)
+
+    static func isSupported(_ url: URL) -> Bool {
+        supportedExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    static func resize(
+        urls: [URL],
+        maxSide: Int,
+        completion: @escaping (Outcome) -> Void
+    ) {
+        queue.async {
+            var outcome = Outcome()
+            for sourceURL in urls {
+                let name = sourceURL.lastPathComponent
+                guard let pixelSize = pixelSize(of: sourceURL) else {
+                    outcome.failed.append(name)
+                    continue
+                }
+                guard Int(max(pixelSize.width, pixelSize.height).rounded()) > maxSide else {
+                    outcome.skipped.append(name)
+                    continue
+                }
+                guard let destination = availableDestination(for: sourceURL, maxSide: maxSide) else {
+                    outcome.failed.append(name)
+                    continue
+                }
+                if runSips(source: sourceURL, destination: destination, maxSide: maxSide) {
+                    outcome.resized.append(destination)
+                } else {
+                    try? FileManager.default.removeItem(at: destination)
+                    outcome.failed.append(name)
+                }
+            }
+            let result = outcome
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    private static func pixelSize(of url: URL) -> CGSize? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil)
+                as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? NSNumber,
+              let height = properties[kCGImagePropertyPixelHeight] as? NSNumber,
+              width.doubleValue > 0,
+              height.doubleValue > 0 else { return nil }
+        return CGSize(width: width.doubleValue, height: height.doubleValue)
+    }
+
+    private static func availableDestination(for source: URL, maxSide: Int) -> URL? {
+        let folder = source.deletingLastPathComponent()
+        let base = source.deletingPathExtension().lastPathComponent
+        let ext = source.pathExtension
+        let fileManager = FileManager.default
+
+        var candidate = folder.appendingPathComponent("\(base)_max\(maxSide)").appendingPathExtension(ext)
+        if !fileManager.fileExists(atPath: candidate.path) { return candidate }
+        for index in 1...9_999 {
+            candidate = folder
+                .appendingPathComponent("\(base)_max\(maxSide)_\(index)")
+                .appendingPathExtension(ext)
+            if !fileManager.fileExists(atPath: candidate.path) { return candidate }
+        }
+        return nil
+    }
+
+    /// `sips` сам определяет входной формат, но без явного `-s format` он для
+    /// части расширений пишет результат в формате по умолчанию. Задаём формат
+    /// там, где он однозначно выводится из расширения.
+    private static func sipsFormat(for pathExtension: String) -> String? {
+        switch pathExtension.lowercased() {
+        case "jpg", "jpeg": return "jpeg"
+        case "png": return "png"
+        case "tif", "tiff": return "tiff"
+        case "heic", "heif": return "heic"
+        case "gif": return "gif"
+        default: return nil
+        }
+    }
+
+    private static func runSips(source: URL, destination: URL, maxSide: Int) -> Bool {
+        var arguments: [String] = []
+        if let format = sipsFormat(for: source.pathExtension) {
+            arguments += ["-s", "format", format]
+        }
+        arguments += ["-Z", String(maxSide), source.path, "--out", destination.path]
+
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
+        task.arguments = arguments
+        task.standardOutput = FileHandle.nullDevice
+        task.standardError = FileHandle.nullDevice
+        do {
+            try task.run()
+            task.waitUntilExit()
+        } catch {
+            return false
+        }
+        return task.terminationStatus == 0
+            && FileManager.default.fileExists(atPath: destination.path)
+    }
+}
+
 final class DirectorySnapshotCache {
     private struct Entry: Codable {
         let savedAt: Date

@@ -229,16 +229,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         panel.delegate = self
         panel.reloadData()
         panel.currentPreviewItemIndex = min(max(request.initialIndex, 0), request.entries.count - 1)
-        quickLookWindowAnchorCenter = NSPoint(
-            x: panel.frame.midX,
-            y: panel.frame.midY
-        )
+        quickLookWindowAnchorCenter = centeredQuickLookAnchor(for: panel)
         let initialURL = request.entries[panel.currentPreviewItemIndex].url
         resizeQuickLookPanel(panel, for: initialURL)
         installQuickLookCachedImageView(in: panel)
         installQuickLookEventMonitor(for: panel)
         panel.makeKeyAndOrderFront(nil)
+        // Для видео и прочих типов без заранее известного размера
+        // `resizeQuickLookPanel` выходит раньше и геометрию не трогает. Панель
+        // всё равно должна появиться по центру, а не там, где её оставил
+        // системный Quick Look.
+        centerQuickLookPanelIfNeeded(panel)
         quickLookIndexDidChange(panel.currentPreviewItemIndex)
+    }
+
+    private func centerQuickLookPanelIfNeeded(_ panel: QLPreviewPanel) {
+        guard !panel.isInFullScreenMode,
+              let anchorCenter = quickLookWindowAnchorCenter,
+              let visibleFrame = quickLookHostScreen(for: panel)?.visibleFrame else { return }
+        let targetFrame = FPQuickLookPanelSizing.anchoredFrame(
+            frameSize: panel.frame.size,
+            center: anchorCenter,
+            visibleFrame: visibleFrame
+        )
+        guard hypot(
+            targetFrame.origin.x - panel.frame.origin.x,
+            targetFrame.origin.y - panel.frame.origin.y
+        ) > 2 else { return }
+        panel.setFrame(targetFrame, display: true, animate: false)
     }
 
     func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
@@ -380,7 +398,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             self.quickLookPresentationState = .windowed
             self.quickLookWindowAnchorCenter =
                 self.quickLookWindowedAnchorCenter
-                ?? NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+                ?? self.centeredQuickLookAnchor(for: panel)
             self.quickLookWindowedAnchorCenter = nil
             self.quickLookLastTargetContentSize = nil
             self.refreshQuickLookOverlay(in: panel)
@@ -559,6 +577,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
     }
 
+    /// Экран, на котором пользователь сейчас работает.
+    ///
+    /// `panel.screen` бесполезен до первого показа панели — у только что
+    /// созданной `QLPreviewPanel.shared()` фрейм ещё нулевой. Поэтому опорным
+    /// считается экран активного окна Qyvro, а панель уже подтягивается к нему.
+    private func quickLookHostScreen(for panel: QLPreviewPanel) -> NSScreen? {
+        if panel.isVisible, let panelScreen = panel.screen {
+            return panelScreen
+        }
+        let hostWindow = windowControllers.first(where: { $0.window?.isKeyWindow == true })?.window
+            ?? windowControllers.first(where: { $0.window?.isVisible == true })?.window
+            ?? windowControllers.first?.window
+        return hostWindow?.screen ?? NSScreen.main
+    }
+
+    /// Центр рабочей области экрана — точка привязки для новой сессии превью.
+    ///
+    /// Раньше привязка бралась из `panel.frame` ещё до `makeKeyAndOrderFront`,
+    /// то есть из нулевого фрейма. Центр (0, 0) затем прижимался `anchoredFrame`
+    /// к границам экрана, и окно предпросмотра открывалось в нижнем левом углу.
+    private func centeredQuickLookAnchor(for panel: QLPreviewPanel) -> NSPoint {
+        guard let visibleFrame = quickLookHostScreen(for: panel)?.visibleFrame else {
+            return NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+        }
+        return NSPoint(x: visibleFrame.midX, y: visibleFrame.midY)
+    }
+
     private func resizeQuickLookPanel(
         _ panel: QLPreviewPanel,
         for url: URL
@@ -572,10 +617,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         guard
               intrinsicSize.width > 1,
               intrinsicSize.height > 1 else { return }
-        let screen = panel.screen
-            ?? windowControllers.first?.window?.screen
-            ?? NSScreen.main
-        guard let visibleFrame = screen?.visibleFrame else { return }
+        guard let visibleFrame = quickLookHostScreen(for: panel)?.visibleFrame else { return }
 
         let contentSize = FPQuickLookPanelSizing.contentSize(
             for: intrinsicSize,
@@ -584,10 +626,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         var targetFrame = panel.frameRect(
             forContentRect: NSRect(origin: .zero, size: contentSize)
         )
-        let anchorCenter = quickLookWindowAnchorCenter ?? NSPoint(
-            x: panel.frame.midX,
-            y: panel.frame.midY
-        )
+        let anchorCenter = quickLookWindowAnchorCenter
+            ?? centeredQuickLookAnchor(for: panel)
         quickLookWindowAnchorCenter = anchorCenter
         targetFrame = FPQuickLookPanelSizing.anchoredFrame(
             frameSize: targetFrame.size,

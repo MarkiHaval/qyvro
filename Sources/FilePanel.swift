@@ -3790,6 +3790,99 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         }
     }
 
+    private var selectedResizableImages: [URL] {
+        selectedItems
+            .filter { !$0.isDirectory && FPImageResizer.isSupported($0.url) }
+            .map(\.url)
+    }
+
+    @objc private func resizeSelectedImagesFromMenu(_ sender: NSMenuItem) {
+        guard let maxSide = sender.representedObject as? Int else {
+            NSSound.beep()
+            return
+        }
+        resizeImages(selectedResizableImages, maxSide: maxSide)
+    }
+
+    @objc private func resizeSelectedImagesToCustomSize(_ sender: Any?) {
+        let sources = selectedResizableImages
+        guard !sources.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        activate()
+
+        let alert = NSAlert()
+        alert.messageText = "Ресайз изображений"
+        alert.informativeText = sources.count == 1
+            ? "Длинная сторона \(sources[0].lastPathComponent), пикселей:"
+            : "Длинная сторона для \(sources.count) изображений, пикселей:"
+        alert.addButton(withTitle: "Уменьшить")
+        alert.addButton(withTitle: "Отмена")
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = String(FPImageResizer.presetMaxSides[0])
+        field.alignment = .left
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard let maxSide = Int(field.stringValue.trimmingCharacters(in: .whitespaces)),
+              maxSide >= 16, maxSide <= 30_000 else {
+            showError("Введите число от 16 до 30000.")
+            return
+        }
+        resizeImages(sources, maxSide: maxSide)
+    }
+
+    private func resizeImages(_ sources: [URL], maxSide: Int) {
+        guard !sources.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        activate()
+        footerLabel.stringValue = sources.count == 1
+            ? "Уменьшаю \(sources[0].lastPathComponent) до \(maxSide)px…"
+            : "Уменьшаю изображений: \(sources.count) до \(maxSide)px…"
+        FPImageResizer.resize(urls: sources, maxSide: maxSide) { [weak self] outcome in
+            guard let self else { return }
+            guard !outcome.resized.isEmpty else {
+                self.footerLabel.stringValue = self.footerText()
+                if outcome.failed.isEmpty {
+                    // Ничего не сделано только потому, что уменьшать было нечего.
+                    self.footerLabel.stringValue = sources.count == 1
+                        ? "\(sources[0].lastPathComponent) уже не больше \(maxSide)px"
+                        : "Все выбранные изображения уже не больше \(maxSide)px"
+                } else {
+                    self.showError(
+                        "Не удалось уменьшить: \(outcome.failed.joined(separator: ", "))"
+                    )
+                }
+                return
+            }
+            DirectorySnapshotCache.shared.invalidate(self.currentURL)
+            self.loadCurrentDirectory(
+                asynchronously: true,
+                preservingGridPosition: true
+            ) { [weak self] in
+                guard let self else { return }
+                if let first = outcome.resized.first {
+                    self.select(url: first)
+                }
+                var summary = outcome.resized.count == 1
+                    ? "Создан \(outcome.resized[0].lastPathComponent)"
+                    : "Уменьшено изображений: \(outcome.resized.count)"
+                if !outcome.skipped.isEmpty {
+                    summary += " · пропущено (уже меньше): \(outcome.skipped.count)"
+                }
+                if !outcome.failed.isEmpty {
+                    summary += " · ошибок: \(outcome.failed.count)"
+                }
+                self.footerLabel.stringValue = summary
+            }
+        }
+    }
+
     func contextMenu() -> NSMenu {
         let menu = NSMenu()
         menu.addItem(withTitle: "Открыть", action: #selector(openSelection(_:)), keyEquivalent: "")
@@ -3895,6 +3988,30 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             }
             menu.setSubmenu(convertMenu, for: convertItem)
             menu.addItem(convertItem)
+        }
+        let resizableImages = selectedResizableImages
+        if !resizableImages.isEmpty {
+            let resizeItem = NSMenuItem(title: "Ресайз", action: nil, keyEquivalent: "")
+            let resizeMenu = NSMenu()
+            let countSuffix = resizableImages.count == 1 ? "" : " (\(resizableImages.count))"
+            for maxSide in FPImageResizer.presetMaxSides {
+                let item = resizeMenu.addItem(
+                    withTitle: "Длинная сторона \(maxSide)px\(countSuffix)",
+                    action: #selector(resizeSelectedImagesFromMenu(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = maxSide
+            }
+            resizeMenu.addItem(.separator())
+            let customItem = resizeMenu.addItem(
+                withTitle: "Свой размер…",
+                action: #selector(resizeSelectedImagesToCustomSize(_:)),
+                keyEquivalent: ""
+            )
+            customItem.target = self
+            menu.setSubmenu(resizeMenu, for: resizeItem)
+            menu.addItem(resizeItem)
         }
         if selectedItems.contains(where: { $0.isDirectory }) {
             let colorItem = NSMenuItem(title: "Цвет папки", action: nil, keyEquivalent: "")
