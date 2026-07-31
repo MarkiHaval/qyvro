@@ -177,6 +177,13 @@ final class FileGridScrollView: NSScrollView, NSDraggingSource {
     /// Возвращает true, если прокрутка ушла в свёрнутый ряд под курсором.
     /// Точка передаётся в системе координат документа сетки.
     var onSectionScroll: ((NSPoint, CGFloat) -> Bool)?
+    /// Щипок двумя пальцами: положительное значение — раздвигание.
+    var onMagnify: ((CGFloat) -> Void)?
+
+    override func magnify(with event: NSEvent) {
+        guard abs(event.magnification) > 0.001 else { return }
+        onMagnify?(event.magnification)
+    }
     var onMouseDownInDocument: ((NSPoint, NSEvent) -> Void)?
     var onMenuInDocument: ((NSPoint) -> NSMenu?)?
     var onHorizontalSwipe: ((CGFloat) -> Void)?

@@ -121,6 +121,9 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     private var renderedGridItemCount = 0
     private var renderedGridViewportWidth: CGFloat = 0
     private var renderedGridContentHeight: CGFloat = 0
+    /// Сдвиги свёрнутых рядов на момент последней перерисовки.
+    private var renderedSectionOffsets: [String: CGFloat] = [:]
+    private var pinchReloadWorkItem: DispatchWorkItem?
     private var cachedGridLayout: GridLayout?
     private var expandedGridSections = Set<String>()
     /// Сдвиг свёрнутого ряда по горизонтали, по идентификатору секции.
@@ -892,6 +895,9 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         gridScrollView.onSectionScroll = { [weak self] point, delta in
             self?.scrollCollapsedSection(at: point, by: delta) ?? false
         }
+        gridScrollView.onMagnify = { [weak self] amount in
+            self?.applyPinchScale(amount)
+        }
         gridScrollView.onMouseDownInDocument = { [weak self] point, event in
             self?.handleGridMouseDown(at: point, event: event)
         }
@@ -1055,9 +1061,15 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let canReuseVisibleCells = renderedGridIndexes == visibleIndexes && !needsReconfigure
 
         if canReuseVisibleCells {
+            // Боковое листание ряда меняет только сдвиг: набор видимых плиток,
+            // ширина окна и высота содержимого остаются прежними. Без учёта
+            // сдвига быстрый путь пропускал перестановку, и ряд не двигался,
+            // хотя значение в модели менялось.
+            let offsets = currentSectionOffsets(layout)
             if renderedGridColumns != layout.columns
                 || abs(renderedGridViewportWidth - viewportWidth) >= 0.5
-                || abs(renderedGridContentHeight - layout.contentHeight) >= 0.5 {
+                || abs(renderedGridContentHeight - layout.contentHeight) >= 0.5
+                || offsets != renderedSectionOffsets {
                 for cell in gridItemViews {
                     cell.isHidden = false
                     cell.frame = gridFrame(for: cell.itemIndex, layout: layout)
@@ -1066,6 +1078,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             renderedGridColumns = layout.columns
             renderedGridViewportWidth = viewportWidth
             renderedGridContentHeight = layout.contentHeight
+            renderedSectionOffsets = offsets
             synchronizeGridHoverWithPointer(animated: false)
             return
         }
@@ -1117,6 +1130,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         renderedGridItemCount = filteredItems.count
         renderedGridViewportWidth = viewportWidth
         renderedGridContentHeight = layout.contentHeight
+        renderedSectionOffsets = currentSectionOffsets(layout)
         synchronizeGridHoverWithPointer(animated: false)
 
         if animateAppear, !swipeEffectActive,
@@ -1473,6 +1487,14 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             FPActionLog.action("стопка версий раскрыта", key)
         }
         loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
+    }
+
+    private func currentSectionOffsets(_ layout: GridLayout) -> [String: CGFloat] {
+        var result: [String: CGFloat] = [:]
+        for section in layout.sections where section.isHorizontal {
+            result[section.id] = section.horizontalOffset
+        }
+        return result
     }
 
     private func gridIndex(at point: NSPoint) -> Int? {
@@ -3183,6 +3205,29 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         popover.contentViewController = controller
         viewScalePopover = popover
         popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .maxY)
+    }
+
+    /// Щипок двумя пальцами меняет размер значков.
+    ///
+    /// Перерисовка сетки на каждое событие жеста слишком дорога, поэтому
+    /// шкала копится, а тяжёлая часть выполняется по завершении серии — жест
+    /// остаётся плавным, а сетка не перестраивается сотни раз в секунду.
+    private func applyPinchScale(_ amount: CGFloat) {
+        let next = min(max(viewScale + Double(amount) * 42, 0), 100)
+        guard abs(next - viewScale) > 0.01 else { return }
+        applyViewScale(next, reload: false)
+        viewScaleRail.value = next
+        pinchReloadWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.updateTableRowHeight()
+            self.tableView.reloadData()
+            self.invalidateGridRenderCache()
+            self.rebuildGridViews()
+            FPActionLog.action("щипок: масштаб \(Int(self.viewScale))")
+        }
+        pinchReloadWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: work)
     }
 
     @objc private func viewScaleChanged(_ sender: Any?) {
