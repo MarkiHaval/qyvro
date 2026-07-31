@@ -174,6 +174,9 @@ final class FileSelectionMarqueeView: NSView {
 }
 
 final class FileGridScrollView: NSScrollView, NSDraggingSource {
+    /// Возвращает true, если прокрутка ушла в свёрнутый ряд под курсором.
+    /// Точка передаётся в системе координат документа сетки.
+    var onSectionScroll: ((NSPoint, CGFloat) -> Bool)?
     var onMouseDownInDocument: ((NSPoint, NSEvent) -> Void)?
     var onMenuInDocument: ((NSPoint) -> NSMenu?)?
     var onHorizontalSwipe: ((CGFloat) -> Void)?
@@ -265,6 +268,17 @@ final class FileGridScrollView: NSScrollView, NSDraggingSource {
     }
 
     override func scrollWheel(with event: NSEvent) {
+        // С зажатым Shift колесо прокручивает свёрнутый ряд под курсором, а не
+        // уводит назад по истории: жест листания папок остаётся нетронутым.
+        if event.modifierFlags.contains(.shift),
+           let onSectionScroll,
+           let documentView {
+            let point = documentView.convert(event.locationInWindow, from: nil)
+            let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+                ? event.scrollingDeltaX
+                : event.scrollingDeltaY
+            if onSectionScroll(point, delta) { return }
+        }
         if horizontalSwipeTracker.handle(
             event,
             began: { [weak self] in self?.onHorizontalSwipeBegan?() },

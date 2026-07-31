@@ -24,6 +24,10 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let rowOffsets: [CGFloat]
         let rowHeights: [CGFloat]
         let itemsHeight: CGFloat
+        /// Свёрнутый ряд листается вбок и живёт со своим сдвигом.
+        let isHorizontal: Bool
+        let horizontalOffset: CGFloat
+        let horizontalExtent: CGFloat
     }
 
     private struct GridLayout {
@@ -118,6 +122,8 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     private var renderedGridContentHeight: CGFloat = 0
     private var cachedGridLayout: GridLayout?
     private var expandedGridSections = Set<String>()
+    /// Сдвиг свёрнутого ряда по горизонтали, по идентификатору секции.
+    private var collapsedSectionOffsets: [String: CGFloat] = [:]
     private var folderViewStates: [String: FolderViewState] = [:]
     private var pendingFolderViewState: FolderViewState?
     private var history: [HistoryEntry] = []
@@ -828,6 +834,9 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         gridContentView.onHorizontalSwipe = { [weak self] deltaX in
             self?.handleHorizontalSwipe(deltaX: deltaX)
         }
+        gridScrollView.onSectionScroll = { [weak self] point, delta in
+            self?.scrollCollapsedSection(at: point, by: delta) ?? false
+        }
         gridScrollView.onMouseDownInDocument = { [weak self] point, event in
             self?.handleGridMouseDown(at: point, event: event)
         }
@@ -1232,13 +1241,17 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         var topOffset = inset
         for source in sourceSections {
             let isExpanded = expandedGridSections.contains(source.id)
-            let displayed = grouped && !isExpanded
-                ? Array(source.indexes.prefix(columns))
-                : source.indexes
+            // Свёрнутая секция показывает весь свой состав в одну строку:
+            // ряд листается вбок с Shift, поэтому обрезать его по числу
+            // колонок больше не нужно.
+            let isHorizontal = grouped && !isExpanded
+            let displayed = source.indexes
             let headerHeight: CGFloat = grouped ? 40 : 0
             let headerTop = topOffset
             let itemsTop = headerTop + headerHeight
-            let rows = Int(ceil(Double(displayed.count) / Double(columns)))
+            let rows = isHorizontal
+                ? (displayed.isEmpty ? 0 : 1)
+                : Int(ceil(Double(displayed.count) / Double(columns)))
             var rowOffsets: [CGFloat] = []
             var rowHeights: [CGFloat] = []
             var rowsHeight: CGFloat = 0
@@ -1247,7 +1260,12 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                 rowHeights.reserveCapacity(rows)
                 for row in 0..<rows {
                     let start = row * columns
-                    let end = min(displayed.count, start + columns)
+                    // Высота ряда считается по ограниченной выборке: в
+                    // свёрнутой секции могут быть сотни файлов, обходить их
+                    // все на каждом проходе раскладки слишком дорого.
+                    let end = isHorizontal
+                        ? min(displayed.count, 60)
+                        : min(displayed.count, start + columns)
                     let height = displayed[start..<end]
                         .map { gridCellHeight(for: $0, maxPreviewSide: visibleIconSize) }
                         .max() ?? itemSize.height
@@ -1272,7 +1290,19 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                     rowCount: rows,
                     rowOffsets: rowOffsets,
                     rowHeights: rowHeights,
-                    itemsHeight: rowsHeight
+                    itemsHeight: rowsHeight,
+                    isHorizontal: isHorizontal,
+                    horizontalOffset: isHorizontal
+                        ? (collapsedSectionOffsets[source.id] ?? 0)
+                        : 0,
+                    horizontalExtent: isHorizontal
+                        ? max(
+                            0,
+                            CGFloat(displayed.count) * (itemSize.width + columnSpacing)
+                                - columnSpacing
+                                - (viewportWidth - inset * 2)
+                        )
+                        : 0
                 )
             )
             topOffset = itemsTop + rowsHeight + (grouped ? 4 : 0)
@@ -1304,12 +1334,19 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let section = layout.sections[position.sectionIndex]
         guard position.position < section.displayedIndexes.count,
               section.displayedIndexes[position.position] == index else { return .zero }
-        let column = position.position % layout.columns
-        let row = position.position / layout.columns
+        let column = section.isHorizontal ? position.position : position.position % layout.columns
+        let row = section.isHorizontal ? 0 : position.position / layout.columns
         guard row < section.rowOffsets.count, row < section.rowHeights.count else { return .zero }
-        let x = layout.columns == 1
-            ? max(layout.inset, (layout.viewportWidth - layout.itemSize.width) / 2)
-            : layout.leadingInset + CGFloat(column) * (layout.itemSize.width + layout.spacing)
+        let x: CGFloat
+        if section.isHorizontal {
+            x = layout.leadingInset
+                + CGFloat(column) * (layout.itemSize.width + layout.spacing)
+                - section.horizontalOffset
+        } else if layout.columns == 1 {
+            x = max(layout.inset, (layout.viewportWidth - layout.itemSize.width) / 2)
+        } else {
+            x = layout.leadingInset + CGFloat(column) * (layout.itemSize.width + layout.spacing)
+        }
         let cellHeight = gridCellHeight(for: index, maxPreviewSide: visibleIconSize)
         // Align metadata baselines along the bottom of the row. Wide previews
         // therefore do not leave an invisible square-height tail underneath.
@@ -1318,6 +1355,27 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             - section.rowOffsets[row]
             - section.rowHeights[row]
         return NSRect(x: x, y: y, width: layout.itemSize.width, height: cellHeight)
+    }
+
+    /// Листает свёрнутый ряд под курсором. Возвращает false, если под
+    /// курсором нет свёрнутой секции или ряд уже упёрся в край — тогда
+    /// событие уходит дальше и работает обычная прокрутка.
+    private func scrollCollapsedSection(at point: NSPoint, by delta: CGFloat) -> Bool {
+        guard viewMode == .largeIcons else { return false }
+        let layout = makeGridLayout(viewportWidth: max(currentGridViewportWidth(), 220))
+        let distanceFromTop = layout.contentHeight - point.y
+        guard let section = layout.sections.first(where: { candidate in
+            candidate.isHorizontal
+                && distanceFromTop >= candidate.headerTop
+                && distanceFromTop <= candidate.itemsTop + candidate.itemsHeight
+        }), section.horizontalExtent > 0 else { return false }
+
+        let current = collapsedSectionOffsets[section.id] ?? 0
+        let next = min(max(current - delta, 0), section.horizontalExtent)
+        guard abs(next - current) > 0.01 else { return false }
+        collapsedSectionOffsets[section.id] = next
+        rebuildGridViews()
+        return true
     }
 
     private func gridIndex(at point: NSPoint) -> Int? {
@@ -1872,6 +1930,24 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                 let rowTop = section.itemsTop + section.rowOffsets[row]
                 let rowBottom = rowTop + section.rowHeights[row]
                 guard rowBottom >= visibleTop, rowTop <= visibleBottom else { continue }
+                if section.isHorizontal {
+                    // В свёрнутом ряду могут быть сотни файлов. Создаются
+                    // только те плитки, что попадают в видимую ширину, плюс
+                    // небольшой запас по краям.
+                    let pitch = layout.itemSize.width + layout.spacing
+                    guard pitch > 0 else { continue }
+                    let leftEdge = section.horizontalOffset - pitch
+                    let rightEdge = section.horizontalOffset + layout.viewportWidth + pitch
+                    let first = max(0, Int(floor(leftEdge / pitch)))
+                    let last = min(
+                        section.displayedIndexes.count,
+                        Int(ceil(rightEdge / pitch)) + 1
+                    )
+                    if first < last {
+                        indexes.append(contentsOf: section.displayedIndexes[first..<last])
+                    }
+                    continue
+                }
                 let start = row * layout.columns
                 let end = min(section.displayedIndexes.count, start + layout.columns)
                 if start < end {
