@@ -595,6 +595,12 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
 
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard !isHidden, alphaValue > 0, bounds.contains(point) else { return nil }
+        // Вся плитка — одна цель для выделения и перетаскивания, поэтому
+        // клики забираются на себя. Звёздочка единственное исключение: без
+        // него отметку мышью поставить нельзя, клик уходил в выделение.
+        if !flagBadge.isHidden, flagBadge.frame.contains(point) {
+            return flagBadge
+        }
         return self
     }
 

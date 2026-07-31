@@ -42,26 +42,25 @@ final class FPPreviewPane: NSView {
 
         previewContainer.translatesAutoresizingMaskIntoConstraints = false
         previewContainer.wantsLayer = true
-        previewContainer.layer?.cornerRadius = 10
+        previewContainer.layer?.cornerRadius = FPStyle.isCyberEditorial ? 5 : 12
         previewContainer.layer?.masksToBounds = true
-        previewContainer.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.32).cgColor
+        previewContainer.layer?.borderWidth = 1
 
         captionBar.translatesAutoresizingMaskIntoConstraints = false
         captionBar.material = .hudWindow
         captionBar.blendingMode = .withinWindow
         captionBar.state = .active
         captionBar.wantsLayer = true
-        captionBar.layer?.cornerRadius = 8
+        captionBar.layer?.cornerRadius = FPStyle.isCyberEditorial ? 5 : 9
+        captionBar.layer?.borderWidth = 1
 
         nameField.translatesAutoresizingMaskIntoConstraints = false
         nameField.font = FPStyle.bodyFont(ofSize: 12, weight: .semibold)
-        nameField.textColor = FPStyle.text
         nameField.lineBreakMode = .byTruncatingMiddle
         nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         detailField.translatesAutoresizingMaskIntoConstraints = false
         detailField.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
-        detailField.textColor = FPStyle.dimText
         detailField.alignment = .right
         detailField.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -77,6 +76,7 @@ final class FPPreviewPane: NSView {
         captionBar.addSubview(nameField)
         captionBar.addSubview(detailField)
         addSubview(flagBadge)
+        applyTheme()
 
         NSLayoutConstraint.activate([
             previewContainer.topAnchor.constraint(equalTo: topAnchor),
@@ -110,6 +110,19 @@ final class FPPreviewPane: NSView {
             flagBadge.widthAnchor.constraint(equalToConstant: 26),
             flagBadge.heightAnchor.constraint(equalToConstant: 26)
         ])
+    }
+
+    /// Цвета берутся из темы, а не задаются жёстко: просмотрщик должен
+    /// следовать за палитрой проводника, включая пользовательские темы.
+    func applyTheme() {
+        previewContainer.layer?.backgroundColor = FPStyle.pane
+            .withAlphaComponent(min(1, FPStyle.pane.alphaComponent + 0.18)).cgColor
+        previewContainer.layer?.borderColor = FPStyle.stroke.cgColor
+        captionBar.layer?.backgroundColor = FPStyle.bar.withAlphaComponent(0.70).cgColor
+        captionBar.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.82).cgColor
+        nameField.textColor = FPStyle.text
+        detailField.textColor = FPStyle.dimText
+        updateFocusRing()
     }
 
     private func updateFocusRing() {
@@ -201,8 +214,10 @@ final class FPPreviewPane: NSView {
 }
 
 /// Содержимое окна: одна, две или три панели рядом.
-final class FPPreviewContentView: NSView {
+final class FPPreviewContentView: NSVisualEffectView {
+    private let backgroundGradientView = FPBackgroundGradientView()
     private let stack = NSStackView()
+    private let hintBar = NSTextField(labelWithString: "")
     private(set) var panes: [FPPreviewPane] = []
     var onKeyDown: ((NSEvent) -> Bool)?
 
@@ -210,23 +225,70 @@ final class FPPreviewContentView: NSView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
+        // Та же подложка, что у окна проводника: настоящее размытие macOS,
+        // поверх него градиент темы. Плоская заливка делала просмотрщик
+        // чужим по отношению ко всему остальному интерфейсу.
+        material = .underWindowBackground
+        blendingMode = .behindWindow
+        state = .active
         wantsLayer = true
-        layer?.backgroundColor = FPStyle.gradientEnd.cgColor
+
+        addSubview(backgroundGradientView)
 
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .horizontal
         stack.distribution = .fillEqually
-        stack.spacing = 12
+        stack.spacing = 14
+
+        hintBar.translatesAutoresizingMaskIntoConstraints = false
+        hintBar.alignment = .center
+        hintBar.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
+        hintBar.stringValue =
+            "← →  листать      F  отметить      ⌫  в корзину      C  сравнение      Esc  закрыть"
+
         addSubview(stack)
+        addSubview(hintBar)
+
         NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12)
+            backgroundGradientView.topAnchor.constraint(equalTo: topAnchor),
+            backgroundGradientView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            backgroundGradientView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            backgroundGradientView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            // Верхний отступ крупнее: под прозрачным заголовком окна живут
+            // кнопки светофора, кадр не должен под них заезжать.
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 34),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            stack.bottomAnchor.constraint(equalTo: hintBar.topAnchor, constant: -8),
+
+            hintBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
+            hintBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            hintBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
+            hintBar.heightAnchor.constraint(equalToConstant: 14)
         ])
+        applyTheme()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func applyTheme() {
+        let opacity = min(max(FPStyle.pane.alphaComponent, 0), 1)
+        let gradientOpacity = min(0.75, 0.50 + opacity * 0.25)
+        backgroundGradientView.setColors(
+            FPStyle.gradientEnabled
+                ? [
+                    FPStyle.gradientStart.withAlphaComponent(gradientOpacity),
+                    FPStyle.gradientEnd.withAlphaComponent(gradientOpacity)
+                ]
+                : [
+                    FPStyle.window.withAlphaComponent(gradientOpacity),
+                    FPStyle.window.withAlphaComponent(gradientOpacity)
+                ]
+        )
+        hintBar.textColor = FPStyle.dimText.withAlphaComponent(0.72)
+        panes.forEach { $0.applyTheme() }
+    }
 
     func setPaneCount(_ count: Int, configure: (FPPreviewPane) -> Void) {
         let target = max(1, min(3, count))
@@ -258,6 +320,10 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     private var paneCount = 1
     private var focusedPane = 0
     private var onIndexChanged: ((URL) -> Void)?
+    /// Клавиши ловятся монитором, а не цепочкой респондеров: `QLPreviewView`
+    /// внутри панели забирает фокус себе при создании, и `keyDown` до нашего
+    /// содержимого не доходит.
+    private var keyMonitor: Any?
 
     /// Сетка под окном должна догонять удаление и отметку сразу.
     var onNeedsRefresh: (() -> Void)?
@@ -293,8 +359,24 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         centerOnActiveScreen()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
-        window?.makeFirstResponder(contentView)
+        installKeyMonitor()
         refreshPanes()
+    }
+
+    private func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard let self,
+                  let window = self.window,
+                  window.isVisible,
+                  window.isKeyWindow else { return event }
+            return self.handle(event) ? nil : event
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+        keyMonitor = nil
     }
 
     private func centerOnActiveScreen() {
@@ -443,6 +525,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        removeKeyMonitor()
         contentView.panes.forEach { $0.teardown() }
         entries.removeAll()
         onIndexChanged = nil
