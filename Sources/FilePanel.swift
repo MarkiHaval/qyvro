@@ -1444,6 +1444,10 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let next = min(max(current - delta, 0), section.horizontalExtent)
         guard abs(next - current) > 0.01 else { return false }
         collapsedSectionOffsets[section.id] = next
+        // Раскладка кэшируется по ширине окна и высоте плитки, а сдвиг ряда в
+        // ключ кэша не входит — без сброса возвращалась старая раскладка со
+        // старым сдвигом, и ряд не двигался, хотя значение менялось.
+        cachedGridLayout = nil
         FPActionLog.action(
             "ряд «\(section.title ?? section.id)» листается",
             "сдвиг \(Int(next)) из \(Int(section.horizontalExtent))"
