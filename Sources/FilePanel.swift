@@ -573,12 +573,11 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
 
         let sortControl = sortMenuControl()
         let filterControl = filterMenuControl()
-        let diskControl = diskRingControl()
         let sizeControl = iconSizeControl()
         let footerRow = NSStackView(
             views: [
                 footerLabel, errorLabel, footerSpacer,
-                diskControl, filterControl, sortControl, sizeControl
+                filterControl, sortControl, sizeControl
             ]
         )
         footerRow.orientation = .horizontal
@@ -803,6 +802,14 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         UserDefaults.standard.set(next, forKey: "CollapseFileVersions")
         expandedVersionGroups.removeAll()
         FPActionLog.action("схлопывание версий → \(next ? "включено" : "выключено")")
+        loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
+    }
+
+    /// Фильтр, выбранный в панели занятости диска слева.
+    func applyFilterFromSidebar(_ filter: FPGridFilter) {
+        FPActionLog.action("занятость диска → \(filter.title)")
+        gridFilter = filter
+        syncFilterControl()
         loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
     }
 

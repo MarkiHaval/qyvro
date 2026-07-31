@@ -1335,3 +1335,175 @@ final class SwipeNavigationIndicator: NSVisualEffectView {
 // lets Core Animation scale the short-lived surface: the real pixel displacement
 // remains visible, while the AMD GPU can sustain the animation without blocking
 // AppKit on this Intel Mac.
+
+/// Занятость диска внизу боковой панели.
+///
+/// Свёрнутый вид — кольцо и свободное место одной строкой. Нажатие
+/// раскрывает разбивку с процентами: сколько занимают картинки, видео и всё
+/// остальное. Разворачивать по умолчанию не стоит — панель и так плотная.
+final class FPDiskUsagePanel: NSView {
+    private let ring = FPDiskUsageRing()
+    private let summary = NSTextField(labelWithString: "")
+    private let chevron = NSImageView()
+    private let breakdown = NSStackView()
+    private var isExpanded = false
+    private var snapshot = FPDiskUsage.Snapshot()
+
+    var onSegmentPicked: ((FPGridFilter) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        ring.translatesAutoresizingMaskIntoConstraints = false
+        ring.onSegmentPicked = { [weak self] filter in self?.onSegmentPicked?(filter) }
+
+        summary.font = FPStyle.headingFont(ofSize: 11, weight: .semibold)
+        summary.translatesAutoresizingMaskIntoConstraints = false
+        summary.lineBreakMode = .byTruncatingTail
+
+        if #available(macOS 11.0, *) {
+            chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)
+        }
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+
+        breakdown.orientation = .vertical
+        breakdown.alignment = .leading
+        breakdown.spacing = 3
+        breakdown.translatesAutoresizingMaskIntoConstraints = false
+        breakdown.isHidden = true
+
+        addSubview(ring)
+        addSubview(summary)
+        addSubview(chevron)
+        addSubview(breakdown)
+
+        NSLayoutConstraint.activate([
+            ring.leadingAnchor.constraint(equalTo: leadingAnchor),
+            ring.topAnchor.constraint(equalTo: topAnchor),
+            ring.widthAnchor.constraint(equalToConstant: 24),
+            ring.heightAnchor.constraint(equalToConstant: 24),
+            summary.leadingAnchor.constraint(equalTo: ring.trailingAnchor, constant: 8),
+            summary.centerYAnchor.constraint(equalTo: ring.centerYAnchor),
+            chevron.leadingAnchor.constraint(greaterThanOrEqualTo: summary.trailingAnchor, constant: 6),
+            chevron.trailingAnchor.constraint(equalTo: trailingAnchor),
+            chevron.centerYAnchor.constraint(equalTo: ring.centerYAnchor),
+            chevron.widthAnchor.constraint(equalToConstant: 10),
+            breakdown.topAnchor.constraint(equalTo: ring.bottomAnchor, constant: 6),
+            breakdown.leadingAnchor.constraint(equalTo: leadingAnchor),
+            breakdown.trailingAnchor.constraint(equalTo: trailingAnchor),
+            breakdown.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        applyTheme()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func applyTheme() {
+        summary.textColor = FPStyle.text.blended(withFraction: 0.34, of: FPStyle.dimText) ?? FPStyle.text
+        chevron.contentTintColor = FPStyle.dimText
+        ring.needsDisplay = true
+    }
+
+    func update(_ value: FPDiskUsage.Snapshot) {
+        snapshot = value
+        ring.update(value)
+        summary.stringValue = value.total > 0
+            ? "СВОБОДНО \(ByteCountFormatter.string(fromByteCount: value.free, countStyle: .file))"
+            : "ДИСК"
+        rebuildBreakdown()
+    }
+
+    private func rebuildBreakdown() {
+        breakdown.arrangedSubviews.forEach {
+            breakdown.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        guard snapshot.total > 0 else { return }
+        let rows: [(String, Int64, NSColor, FPGridFilter?)] = [
+            ("Картинки", snapshot.images, FPStyle.accent, .images),
+            ("Видео", snapshot.videos, FPStyle.orange, .videos),
+            ("Остальное", snapshot.other, FPStyle.dimText.withAlphaComponent(0.55), nil),
+            ("Свободно", snapshot.free, FPStyle.stroke.withAlphaComponent(0.45), nil)
+        ]
+        for row in rows {
+            let percent = Double(row.1) / Double(max(snapshot.total, 1)) * 100
+            let line = FPDiskBreakdownRow(
+                title: row.0,
+                value: ByteCountFormatter.string(fromByteCount: row.1, countStyle: .file),
+                percent: percent,
+                color: row.2,
+                filter: row.3
+            )
+            line.onPick = { [weak self] filter in self?.onSegmentPicked?(filter) }
+            breakdown.addArrangedSubview(line)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard point.y >= ring.frame.minY else {
+            super.mouseDown(with: event)
+            return
+        }
+        isExpanded.toggle()
+        breakdown.isHidden = !isExpanded
+        FPActionLog.action("занятость диска → \(isExpanded ? "развёрнуто" : "свёрнуто")")
+        if #available(macOS 11.0, *) {
+            chevron.image = NSImage(
+                systemSymbolName: isExpanded ? "chevron.up" : "chevron.down",
+                accessibilityDescription: nil
+            )
+        }
+    }
+}
+
+/// Одна строка разбивки: цветная точка, название, процент и объём.
+final class FPDiskBreakdownRow: NSView {
+    private let filter: FPGridFilter?
+    var onPick: ((FPGridFilter) -> Void)?
+
+    init(title: String, value: String, percent: Double, color: NSColor, filter: FPGridFilter?) {
+        self.filter = filter
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        let dot = FPLayerView(color: color, cornerRadius: 4)
+        let name = NSTextField(labelWithString: title.uppercased())
+        name.font = FPStyle.headingFont(ofSize: 9.5, weight: .semibold)
+        name.textColor = FPStyle.dimText
+        name.translatesAutoresizingMaskIntoConstraints = false
+        let amount = NSTextField(labelWithString: String(format: "%.0f%%  %@", percent, value))
+        amount.font = .monospacedDigitSystemFont(ofSize: 9.5, weight: .medium)
+        amount.textColor = FPStyle.dimText.withAlphaComponent(0.8)
+        amount.alignment = .right
+        amount.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(dot)
+        addSubview(name)
+        addSubview(amount)
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 14),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            dot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: 8),
+            dot.heightAnchor.constraint(equalToConstant: 8),
+            name.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 7),
+            name.centerYAnchor.constraint(equalTo: centerYAnchor),
+            amount.leadingAnchor.constraint(greaterThanOrEqualTo: name.trailingAnchor, constant: 6),
+            amount.trailingAnchor.constraint(equalTo: trailingAnchor),
+            amount.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func resetCursorRects() {
+        if filter != nil { addCursorRect(bounds, cursor: .pointingHand) }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let filter else { return }
+        onPick?(filter)
+    }
+}

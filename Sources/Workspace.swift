@@ -951,6 +951,7 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
 
     private let rootSplitView = NSSplitView()
     private let splitView = NSSplitView()
+    private let diskPanel = FPDiskUsagePanel(frame: .zero)
     private var sidebarResizeMonitor: Any?
     private var isDraggingSidebarEdge = false
     private let previewSidebar = FilePreviewSidebar()
@@ -1467,12 +1468,29 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         sidebarStack.translatesAutoresizingMaskIntoConstraints = false
         rebuildSidebarContents()
 
+        diskPanel.onSegmentPicked = { [weak self] filter in
+            self?.activePanel?.applyFilterFromSidebar(filter)
+        }
+        FPDiskUsage.refreshCapacity()
+        diskPanel.update(FPDiskUsage.snapshot)
+        FPDiskUsage.refreshBreakdown { [weak self] in
+            self?.diskPanel.update(FPDiskUsage.snapshot)
+        }
+        container.addSubview(diskPanel)
         container.addSubview(sidebarStack)
         NSLayoutConstraint.activate([
             sidebarStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
             sidebarStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
             sidebarStack.topAnchor.constraint(equalTo: container.topAnchor, constant: 52),
-            sidebarStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14)
+            sidebarStack.bottomAnchor.constraint(
+                lessThanOrEqualTo: diskPanel.topAnchor,
+                constant: -12
+            ),
+            // Занятость диска прижата к низу панели: это справочная строка, а
+            // не пункт навигации, ей не место в общем списке.
+            diskPanel.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 18),
+            diskPanel.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -16),
+            diskPanel.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -14)
         ])
         return container
     }
