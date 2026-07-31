@@ -137,6 +137,12 @@ final class FPPreviewPane: NSView {
     }
 
     func show(url: URL?) {
+        // Если файл тот же, кадр не трогается. Иначе при листании активной
+        // панели соседние перезагружали ровно ту же картинку и мигали.
+        if url == self.url, url != nil, previewView != nil {
+            refreshFlag()
+            return
+        }
         self.url = url
         // QLPreviewView пересоздаётся под каждый файл: повторное присвоение
         // previewItem у живого экземпляра иногда оставляет на экране кадр от
@@ -244,7 +250,7 @@ final class FPPreviewContentView: NSVisualEffectView {
         hintBar.alignment = .center
         hintBar.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
         hintBar.stringValue =
-            "← →  листать      F  отметить      ⌫  в корзину      C  сравнение      Esc  закрыть"
+            "← →  листать      F  отметить      ⌫  в корзину      C  сравнение      T  на весь экран      Esc  закрыть"
 
         addSubview(stack)
         addSubview(hintBar)
@@ -329,6 +335,8 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     /// внутри панели забирает фокус себе при создании, и `keyDown` до нашего
     /// содержимого не доходит.
     private var keyMonitor: Any?
+    /// Рамка окна до растягивания на экран, чтобы вернуть её обратно.
+    private var framedBeforeMaximize: NSRect?
 
     /// Сетка под окном должна догонять удаление и отметку сразу.
     var onNeedsRefresh: (() -> Void)?
@@ -345,6 +353,10 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         window.isMovableByWindowBackground = true
         window.backgroundColor = FPStyle.gradientEnd
         window.minSize = NSSize(width: 520, height: 420)
+        // Зелёная кнопка растягивает окно по экрану, а не уводит в системный
+        // полноэкранный режим: тот выносит окно на отдельный рабочий стол, и
+        // перетаскивать файлы в проводник становится неудобно.
+        window.collectionBehavior.insert(.fullScreenAuxiliary)
         super.init(window: window)
         window.delegate = self
         window.contentView = contentView
@@ -358,6 +370,10 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     func present(_ request: FPQuickLookRequest) {
         entries = request.entries
         onIndexChanged = request.onIndexChanged
+        // Каждый показ начинается с одной панели: режим сравнения не должен
+        // переживать закрытие окна, иначе следующий пробел открывает пачку.
+        paneCount = 1
+        framedBeforeMaximize = nil
         let start = min(max(request.initialIndex, 0), max(entries.count - 1, 0))
         paneIndices = (0..<paneCount).map { min(start + $0, max(entries.count - 1, 0)) }
         focusedPane = 0
@@ -516,6 +532,26 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         refreshPanes()
     }
 
+    /// Растягивает окно на видимую область экрана и возвращает обратно.
+    func toggleMaximized() {
+        guard let window,
+              let visible = (window.screen ?? NSScreen.main)?.visibleFrame else { return }
+        if let previous = framedBeforeMaximize {
+            framedBeforeMaximize = nil
+            window.setFrame(previous, display: true, animate: true)
+            return
+        }
+        framedBeforeMaximize = window.frame
+        window.setFrame(visible, display: true, animate: true)
+    }
+
+    /// Системный полноэкранный режим перехватывается: зелёная кнопка и
+    /// двойной щелчок по заголовку должны растягивать окно по экрану.
+    func windowShouldZoom(_ window: NSWindow, toFrame newFrame: NSRect) -> Bool {
+        toggleMaximized()
+        return false
+    }
+
     private func cyclePaneCount() {
         let previous = paneCount
         paneCount = paneCount % 3 + 1
@@ -541,6 +577,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         case 51: trashFocused()                       // ⌫
         case 3: focusedURL.map(toggleFlag)            // F
         case 8: cyclePaneCount()                      // C
+        case 17: toggleMaximized()                    // T — на весь экран
         case 18, 19, 20 where paneCount > 1:          // 1, 2, 3 — выбор панели
             let requested = Int(event.charactersIgnoringModifiers ?? "1") ?? 1
             guard requested >= 1, requested <= paneCount else { return true }
