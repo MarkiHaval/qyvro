@@ -32,8 +32,10 @@ final class FilePreviewSidebar: NSVisualEffectView {
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        material = .sidebar
-        blendingMode = .withinWindow
+        // Та же подложка, что у левой панели: настоящее размытие macOS
+        // сквозь окно, а не плотная серая заливка поверх него.
+        material = .underWindowBackground
+        blendingMode = .behindWindow
         state = .active
         wantsLayer = true
         translatesAutoresizingMaskIntoConstraints = false
@@ -92,7 +94,10 @@ final class FilePreviewSidebar: NSVisualEffectView {
     }
 
     private func buildUI() {
-        heading.font = .systemFont(ofSize: 14.5, weight: .semibold)
+        // Заголовок панели набран как рубрики в проводнике: тот же шрифт,
+        // капс и разрядка. На системном он выбивался из интерфейса.
+        heading.font = FPStyle.headingFont(ofSize: 13.5, weight: .semibold)
+        heading.stringValue = "ПРЕДПРОСМОТР"
         heading.translatesAutoresizingMaskIntoConstraints = false
 
         closeButton.isBordered = false
@@ -120,7 +125,8 @@ final class FilePreviewSidebar: NSVisualEffectView {
 
         previewContainer.translatesAutoresizingMaskIntoConstraints = false
         previewContainer.wantsLayer = true
-        previewContainer.layer?.cornerRadius = 14
+        previewContainer.layer?.cornerRadius = FPStyle.isCyberEditorial ? 6 : 12
+        previewContainer.layer?.borderWidth = 1
         previewContainer.layer?.borderWidth = 0.5
         previewContainer.layer?.masksToBounds = true
 
@@ -147,17 +153,18 @@ final class FilePreviewSidebar: NSVisualEffectView {
             )
         }
         emptyLabel.alignment = .center
-        emptyLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        emptyLabel.font = FPStyle.headingFont(ofSize: 12.5, weight: .semibold)
+        emptyLabel.stringValue = "ВЫБЕРИТЕ ФАЙЛ ИЛИ ПАПКУ"
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
         nameLabel.alignment = .center
-        nameLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        nameLabel.font = FPStyle.headingFont(ofSize: 15, weight: .semibold)
         nameLabel.maximumNumberOfLines = 3
         nameLabel.lineBreakMode = .byTruncatingMiddle
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
 
         summaryLabel.alignment = .center
-        summaryLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        summaryLabel.font = FPStyle.headingFont(ofSize: 11.5, weight: .semibold)
         summaryLabel.lineBreakMode = .byTruncatingTail
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -167,7 +174,7 @@ final class FilePreviewSidebar: NSVisualEffectView {
         detailsStack.translatesAutoresizingMaskIntoConstraints = false
 
         copyPathButton.title = "Скопировать путь"
-        copyPathButton.font = .systemFont(ofSize: 11.5, weight: .semibold)
+        copyPathButton.font = FPStyle.headingFont(ofSize: 12.5, weight: .semibold)
         copyPathButton.isBordered = false
         copyPathButton.bezelStyle = .inline
         copyPathButton.target = self
@@ -359,12 +366,14 @@ final class FilePreviewSidebar: NSVisualEffectView {
 
     private func addDetail(title: String, value: String) {
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        titleLabel.font = FPStyle.headingFont(ofSize: 11.5, weight: .semibold)
         titleLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         titleLabel.widthAnchor.constraint(equalToConstant: 75).isActive = true
 
         let valueLabel = NSTextField(wrappingLabelWithString: value)
-        valueLabel.font = .systemFont(ofSize: 11.5, weight: .regular)
+        // Цифры моноширинные: размеры и даты выстраиваются в колонку и не
+        // прыгают при переключении файлов.
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .medium)
         valueLabel.maximumNumberOfLines = title == "Путь" ? 2 : 1
         valueLabel.lineBreakMode = .byTruncatingMiddle
         valueLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -426,20 +435,30 @@ final class FilePreviewSidebar: NSVisualEffectView {
     }
 
     private func applyTheme() {
-        layer?.backgroundColor = FPStyle.sidebar.withAlphaComponent(0.90).cgColor
+        // Тон берётся из темы и остаётся полупрозрачным — панель должна
+        // светиться фоном проводника, а не выглядеть серой плитой поверх.
+        layer?.backgroundColor = FPStyle.sidebar
+            .withAlphaComponent(min(0.62, FPStyle.sidebar.alphaComponent + 0.18)).cgColor
         layer?.borderColor = FPStyle.stroke.cgColor
         layer?.borderWidth = 0.5
         heading.textColor = FPStyle.text
         closeButton.contentTintColor = FPStyle.dimText
         closeButton.layer?.backgroundColor = FPStyle.control.cgColor
-        previewContainer.layer?.backgroundColor = FPStyle.controlStrong.cgColor
+        previewContainer.layer?.backgroundColor = FPStyle.pane
+            .withAlphaComponent(min(1, FPStyle.pane.alphaComponent + 0.10)).cgColor
+        previewContainer.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.7).cgColor
         previewContainer.layer?.borderColor = FPStyle.stroke.cgColor
         nameLabel.textColor = FPStyle.text
         summaryLabel.textColor = FPStyle.orange
+        heading.textColor = FPStyle.text
+        emptyLabel.textColor = FPStyle.dimText.withAlphaComponent(0.75)
         emptyIcon.contentTintColor = FPStyle.dimText
         emptyLabel.textColor = FPStyle.dimText
         copyPathButton.contentTintColor = FPStyle.accent
         copyPathButton.layer?.backgroundColor = FPStyle.control.cgColor
+        copyPathButton.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.8).cgColor
+        copyPathButton.layer?.borderWidth = 1
+        copyPathButton.contentTintColor = FPStyle.accent
         detailsStack.arrangedSubviews.forEach { row in
             guard let fields = (row as? NSStackView)?.arrangedSubviews
                 .compactMap({ $0 as? NSTextField }),
