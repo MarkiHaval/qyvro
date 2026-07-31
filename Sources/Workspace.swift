@@ -2061,9 +2061,20 @@ final class ExplorerWindowController: NSWindowController, NSWindowDelegate {
             restoredPaneFractions: session?.paneFractions,
             quickLookHandler: quickLookHandler
         )
-        let restoredFrame = session.map {
-            NSRect(x: $0.frameX, y: $0.frameY, width: $0.frameWidth, height: $0.frameHeight)
-        }
+        // Сохранённое положение может указывать на экран, которого больше нет:
+        // после отключения монитора или смены разрешения окно открывалось за
+        // краем видимой области, и добраться до него было нельзя.
+        let restoredFrame = session
+            .map {
+                NSRect(x: $0.frameX, y: $0.frameY, width: $0.frameWidth, height: $0.frameHeight)
+            }
+            .flatMap { frame -> NSRect? in
+                let visibleSomewhere = NSScreen.screens.contains { screen in
+                    let overlap = screen.visibleFrame.intersection(frame)
+                    return overlap.width >= 160 && overlap.height >= 120
+                }
+                return visibleSomewhere ? frame : nil
+            }
         let window = NSWindow(
             contentRect: restoredFrame ?? NSRect(x: 0, y: 0, width: 1220, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
