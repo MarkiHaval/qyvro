@@ -356,7 +356,11 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         // Зелёная кнопка растягивает окно по экрану, а не уводит в системный
         // полноэкранный режим: тот выносит окно на отдельный рабочий стол, и
         // перетаскивать файлы в проводник становится неудобно.
+        // Окно должно появляться на том рабочем столе, где сейчас проводник.
+        // Без этого macOS показывает его там, где оно открывалось в прошлый
+        // раз, и пробел перебрасывал на другой рабочий стол.
         window.collectionBehavior.insert(.fullScreenAuxiliary)
+        window.collectionBehavior.insert(.moveToActiveSpace)
         super.init(window: window)
         window.delegate = self
         window.contentView = contentView
