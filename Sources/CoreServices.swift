@@ -895,6 +895,11 @@ enum FPPreferences {
         return min(max(UserDefaults.standard.double(forKey: "SwipeSensitivity"), 10), 100)
     }
 
+    /// Схлопывать ли производные файлы в одну стопку.
+    static var collapsesFileVersions: Bool {
+        UserDefaults.standard.bool(forKey: "CollapseFileVersions")
+    }
+
     static var swipeThreshold: CGFloat {
         CGFloat(190 - swipeSensitivity * 1.45)
     }
@@ -1716,5 +1721,66 @@ enum FPUploadPrep {
         }
         // Даже на минимальном качестве не влезло — отдаём что получилось.
         return FileManager.default.fileExists(atPath: target.path) ? target : nil
+    }
+}
+
+/// Схлопывание версий одного файла в стопку.
+///
+/// В папке загрузок один и тот же кадр лежит в нескольких видах: оригинал,
+/// уменьшенная копия `_max5999`, её JPEG-вариант, дубль от браузера `(1)`.
+/// Лента показывает один представитель со счётчиком, остальные прячутся под
+/// ним и раскрываются нажатием.
+enum FPVersionGrouping {
+    /// Общее имя для всех производных одного файла.
+    ///
+    /// Отбрасываются только заведомо служебные хвосты: наш собственный
+    /// `_maxNNNN`, его номер при совпадении имён и скобочный дубль браузера.
+    /// Просто числовой хвост не трогается — под него попали бы кадры
+    /// последовательности вроде `shot_01` и `shot_02`.
+    static func baseName(for url: URL) -> String {
+        var name = url.deletingPathExtension().lastPathComponent
+
+        if let range = name.range(of: #"\s\(\d+\)$"#, options: .regularExpression) {
+            name.removeSubrange(range)
+        }
+        if let range = name.range(of: #"_max\d+(_\d+)?$"#, options: .regularExpression) {
+            name.removeSubrange(range)
+        }
+        return name
+    }
+
+    struct Group {
+        let key: String
+        let representative: FileItem
+        let members: [FileItem]
+    }
+
+    /// Собирает элементы в группы, сохраняя исходный порядок ленты.
+    static func groups(for items: [FileItem]) -> [Group] {
+        var order: [String] = []
+        var buckets: [String: [FileItem]] = [:]
+        for item in items {
+            let key = item.isDirectory ? item.url.path : baseName(for: item.url)
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(item)
+        }
+        return order.compactMap { key in
+            guard let members = buckets[key], let first = members.first else { return nil }
+            guard members.count > 1 else {
+                return Group(key: key, representative: first, members: members)
+            }
+            // Представителем становится оригинал — файл, чьё имя совпадает с
+            // общим. Если оригинала уже нет, берётся самый тяжёлый: он несёт
+            // больше всего данных.
+            let original = members.first {
+                $0.url.deletingPathExtension().lastPathComponent == key
+            }
+            let heaviest = members.max { ($0.size ?? 0) < ($1.size ?? 0) }
+            return Group(
+                key: key,
+                representative: original ?? heaviest ?? first,
+                members: members
+            )
+        }
     }
 }

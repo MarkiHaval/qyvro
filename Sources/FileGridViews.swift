@@ -573,6 +573,7 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     private let kindField = NSTextField(labelWithString: "")
     /// Звёздочка «отобрано» в углу миниатюры.
     private let flagBadge = FPSelectedFlagBadge()
+    private let versionBadge = FPVersionCountBadge()
     private var previewWidthConstraint: NSLayoutConstraint!
     private var previewHeightConstraint: NSLayoutConstraint!
     private var mouseDownPoint: NSPoint?
@@ -617,6 +618,12 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     func flagBadgeContains(_ point: NSPoint) -> Bool {
         guard !flagBadge.isHidden, let superview else { return false }
         return flagBadge.frame.contains(convert(point, from: superview))
+    }
+
+    /// Нажатие по счётчику версий раскрывает стопку.
+    func versionBadgeContains(_ point: NSPoint) -> Bool {
+        guard !versionBadge.isHidden, let superview else { return false }
+        return versionBadge.frame.contains(convert(point, from: superview))
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -812,6 +819,9 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         addSubview(titleField)
         addSubview(kindField)
         addSubview(flagBadge)
+        versionBadge.translatesAutoresizingMaskIntoConstraints = false
+        versionBadge.isHidden = true
+        addSubview(versionBadge)
 
         previewWidthConstraint = previewImageView.widthAnchor.constraint(equalToConstant: 64)
         previewHeightConstraint = previewImageView.heightAnchor.constraint(equalToConstant: 64)
@@ -825,6 +835,10 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
             // цветной кружок метки, который живёт слева.
             flagBadge.trailingAnchor.constraint(equalTo: previewImageView.trailingAnchor, constant: 3),
             flagBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor, constant: -3),
+            versionBadge.leadingAnchor.constraint(equalTo: previewImageView.leadingAnchor, constant: -3),
+            versionBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor, constant: -3),
+            versionBadge.heightAnchor.constraint(equalToConstant: 20),
+            versionBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 30),
             flagBadge.widthAnchor.constraint(equalToConstant: 18),
             flagBadge.heightAnchor.constraint(equalToConstant: 18),
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
@@ -838,7 +852,16 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         ])
     }
 
-    func configure(item: FileItem, image: NSImage, imageSize: CGFloat, selected: Bool, cut: Bool) {
+    func configure(
+        item: FileItem,
+        image: NSImage,
+        imageSize: CGFloat,
+        selected: Bool,
+        cut: Bool,
+        versionCount: Int = 0
+    ) {
+        versionBadge.count = versionCount
+        versionBadge.isHidden = versionCount < 2
         let path = item.url.standardizedFileURL.path
         let replacesPlaceholder = representedPath == path && previewImageView.image !== image
         if replacesPlaceholder,
@@ -1765,5 +1788,39 @@ final class FileTransferController: NSWindowController {
     @objc private func cancel(_ sender: Any?) {
         cancelled = true
         titleField.stringValue = "Остановка после текущего объекта…"
+    }
+}
+
+
+/// Счётчик версий в углу плитки: «×3» означает, что под этим файлом лежат
+/// ещё две его производные. Нажатие раскрывает стопку.
+final class FPVersionCountBadge: NSView {
+    var count = 0 {
+        didSet { needsDisplay = true }
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard count > 1 else { return }
+        let path = NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7)
+        NSColor.black.withAlphaComponent(0.62).setFill()
+        path.fill()
+        FPStyle.orange.withAlphaComponent(0.85).setStroke()
+        path.lineWidth = 1
+        path.stroke()
+
+        let text = "×\(count)" as NSString
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .bold),
+            .foregroundColor: FPStyle.orange
+        ]
+        let size = text.size(withAttributes: attributes)
+        text.draw(
+            at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2),
+            withAttributes: attributes
+        )
     }
 }

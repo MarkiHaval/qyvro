@@ -124,6 +124,10 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     private var expandedGridSections = Set<String>()
     /// Сдвиг свёрнутого ряда по горизонтали, по идентификатору секции.
     private var collapsedSectionOffsets: [String: CGFloat] = [:]
+    /// Раскрытые стопки версий. Схлопывание включается в меню фильтра.
+    private var expandedVersionGroups = Set<String>()
+    /// Сколько файлов скрыто под представителем, по пути представителя.
+    private var versionGroupCounts: [String: Int] = [:]
     private var folderViewStates: [String: FolderViewState] = [:]
     private var pendingFolderViewState: FolderViewState?
     private var history: [HistoryEntry] = []
@@ -752,11 +756,28 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             item.state = option == gridFilter ? .on : .off
             if option == .flaggedToday { menu.addItem(.separator()) }
         }
+        menu.addItem(.separator())
+        let collapse = menu.addItem(
+            withTitle: "Схлопывать версии файлов",
+            action: #selector(toggleVersionCollapsing(_:)),
+            keyEquivalent: ""
+        )
+        collapse.target = self
+        collapse.state = FPPreferences.collapsesFileVersions ? .on : .off
+        collapse.toolTip = "Оригинал, уменьшенная копия и её JPEG показываются одной стопкой"
         menu.popUp(
             positioning: nil,
             at: NSPoint(x: 0, y: filterButton.bounds.height + 4),
             in: filterButton
         )
+    }
+
+    @objc private func toggleVersionCollapsing(_ sender: Any?) {
+        let next = !FPPreferences.collapsesFileVersions
+        UserDefaults.standard.set(next, forKey: "CollapseFileVersions")
+        expandedVersionGroups.removeAll()
+        FPActionLog.action("схлопывание версий → \(next ? "включено" : "выключено")")
+        loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
     }
 
     @objc private func applyGridFilter(_ sender: NSMenuItem) {
@@ -1046,7 +1067,8 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                     image: displayImage(for: item, size: visibleIconSize),
                     imageSize: visibleIconSize,
                     selected: gridSelectionIndexes.contains(index),
-                    cut: FPCutFileState.shared.contains(item.url)
+                    cut: FPCutFileState.shared.contains(item.url),
+                    versionCount: versionGroupCounts[item.url.path] ?? 0
                 )
             } else {
                 cell.setSelected(gridSelectionIndexes.contains(index))
@@ -1383,6 +1405,43 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         return true
     }
 
+    /// Оставляет в ленте по одному представителю на группу версий.
+    ///
+    /// Раскрытые группы показываются целиком: человек мог развернуть стопку,
+    /// чтобы сравнить оригинал с уменьшенной копией.
+    private func applyVersionCollapsing() {
+        versionGroupCounts.removeAll()
+        guard FPPreferences.collapsesFileVersions else { return }
+        var result: [FileItem] = []
+        for group in FPVersionGrouping.groups(for: filteredItems) {
+            guard group.members.count > 1 else {
+                result.append(group.representative)
+                continue
+            }
+            if expandedVersionGroups.contains(group.key) {
+                result.append(contentsOf: group.members)
+                continue
+            }
+            versionGroupCounts[group.representative.url.path] = group.members.count
+            result.append(group.representative)
+        }
+        filteredItems = result
+    }
+
+    /// Раскрывает или сворачивает стопку версий под выбранным файлом.
+    func toggleVersionGroup(at index: Int) {
+        guard filteredItems.indices.contains(index) else { return }
+        let key = FPVersionGrouping.baseName(for: filteredItems[index].url)
+        if expandedVersionGroups.contains(key) {
+            expandedVersionGroups.remove(key)
+            FPActionLog.action("стопка версий свёрнута", key)
+        } else {
+            expandedVersionGroups.insert(key)
+            FPActionLog.action("стопка версий раскрыта", key)
+        }
+        loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
+    }
+
     private func gridIndex(at point: NSPoint) -> Int? {
         let layout = makeGridLayout(viewportWidth: max(currentGridViewportWidth(), 220))
         let distanceFromTop = layout.contentHeight - point.y
@@ -1490,10 +1549,15 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             // самих ячеек они не доходят, поэтому внутри ячейки поймать
             // нажатие на значок нельзя.
             if event.clickCount == 1,
-               let cell = gridItemViews.first(where: { $0.itemIndex == index }),
-               cell.flagBadgeContains(point) {
-                toggleFlag(at: index)
-                return
+               let cell = gridItemViews.first(where: { $0.itemIndex == index }) {
+                if cell.flagBadgeContains(point) {
+                    toggleFlag(at: index)
+                    return
+                }
+                if cell.versionBadgeContains(point) {
+                    toggleVersionGroup(at: index)
+                    return
+                }
             }
             selectGridItem(
                 at: index,
@@ -2925,6 +2989,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         if gridFilter != .all {
             filteredItems = filteredItems.filter { gridFilter.matches($0) }
         }
+        applyVersionCollapsing()
         filteredIndexByPath = Dictionary(uniqueKeysWithValues: filteredItems.enumerated().map { ($0.element.url.path, $0.offset) })
         gridDataRevision += 1
         cachedDateSections = nil
