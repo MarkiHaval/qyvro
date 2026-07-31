@@ -76,6 +76,8 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     private let viewModeToggleButton = NSButton()
     private let viewScaleButton = HoverButton()
     private let sortButton = SortPillButton()
+    private let filterButton = SortPillButton()
+    private var gridFilter: FPGridFilter = .all
     private let swipeIndicator = SwipeNavigationIndicator(frame: NSRect(x: 0, y: 0, width: 66, height: 68))
     private let swipeWaveOverlay = SwipeSurfaceWaveView()
     private let sortOptions: [(title: String, key: String)] = [
@@ -559,8 +561,11 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let sortControl = sortMenuControl()
+        let filterControl = filterMenuControl()
         let sizeControl = iconSizeControl()
-        let footerRow = NSStackView(views: [footerLabel, errorLabel, footerSpacer, sortControl, sizeControl])
+        let footerRow = NSStackView(
+            views: [footerLabel, errorLabel, footerSpacer, filterControl, sortControl, sizeControl]
+        )
         footerRow.orientation = .horizontal
         footerRow.spacing = 8
         footerRow.alignment = .centerY
@@ -702,6 +707,58 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         sortButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
         syncSortControl()
         return sortButton
+    }
+
+    private func filterMenuControl() -> NSView {
+        filterButton.target = self
+        filterButton.action = #selector(showFilterMenu(_:))
+        filterButton.sendAction(on: [.leftMouseDown])
+        filterButton.toolTip = "Фильтр ленты"
+        filterButton.isBordered = false
+        filterButton.isTransparent = false
+        filterButton.bezelStyle = .inline
+        filterButton.alignment = .left
+        filterButton.translatesAutoresizingMaskIntoConstraints = false
+        filterButton.widthAnchor.constraint(equalToConstant: 108).isActive = true
+        filterButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        syncFilterControl()
+        return filterButton
+    }
+
+    private func syncFilterControl() {
+        filterButton.title = gridFilter.shortTitle
+        // Активный фильтр подсвечен: иначе легко забыть, что лента урезана, и
+        // решить, что файлы пропали.
+        filterButton.contentTintColor = gridFilter == .all ? FPStyle.text : FPStyle.orange
+        filterButton.needsDisplay = true
+    }
+
+    @objc private func showFilterMenu(_ sender: Any?) {
+        let menu = NSMenu()
+        for option in FPGridFilter.allCases {
+            let item = menu.addItem(
+                withTitle: option.title,
+                action: #selector(applyGridFilter(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = option.rawValue
+            item.state = option == gridFilter ? .on : .off
+            if option == .flaggedToday { menu.addItem(.separator()) }
+        }
+        menu.popUp(
+            positioning: nil,
+            at: NSPoint(x: 0, y: filterButton.bounds.height + 4),
+            in: filterButton
+        )
+    }
+
+    @objc private func applyGridFilter(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let option = FPGridFilter(rawValue: raw) else { return }
+        gridFilter = option
+        syncFilterControl()
+        loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
     }
 
     private func sliderIcon(_ symbol: String) -> NSImageView {
@@ -2782,6 +2839,9 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                 item.name.localizedCaseInsensitiveContains(query) ||
                 item.kind.localizedCaseInsensitiveContains(query)
             }
+        }
+        if gridFilter != .all {
+            filteredItems = filteredItems.filter { gridFilter.matches($0) }
         }
         filteredIndexByPath = Dictionary(uniqueKeysWithValues: filteredItems.enumerated().map { ($0.element.url.path, $0.offset) })
         gridDataRevision += 1

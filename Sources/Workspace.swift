@@ -1490,9 +1490,7 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         sidebarSearchField.font = .systemFont(ofSize: 13, weight: .medium)
         sidebarSearchField.translatesAutoresizingMaskIntoConstraints = false
 
-        sidebarSearchScopeButton.title = "Папка"
         sidebarSearchScopeButton.font = .systemFont(ofSize: 10.5, weight: .semibold)
-        sidebarSearchScopeButton.contentTintColor = FPStyle.orange
         sidebarSearchScopeButton.isBordered = false
         sidebarSearchScopeButton.bezelStyle = .inline
         sidebarSearchScopeButton.target = self
@@ -1502,6 +1500,7 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         sidebarSearchScopeButton.layer?.cornerRadius = 6
         sidebarSearchScopeButton.layer?.backgroundColor = FPStyle.controlStrong.cgColor
         sidebarSearchScopeButton.translatesAutoresizingMaskIntoConstraints = false
+        applySearchScopeAppearance()
 
         if #available(macOS 11.0, *) {
             sidebarSearchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: "Поиск")
@@ -1646,6 +1645,28 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         sidebarSearchField.currentEditor()?.selectAll(nil)
     }
 
+    /// Вид переключателя области поиска: «Мак» выделен цветом, «Папка» —
+    /// обычным текстом, чтобы расширенный поиск был заметен.
+    private func applySearchScopeAppearance() {
+        let isMac = searchScope == .mac
+        let title = isMac ? "Мак" : "Папка"
+        sidebarSearchScopeButton.title = title
+        sidebarSearchScopeButton.contentTintColor = isMac ? FPStyle.orange : FPStyle.text
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        sidebarSearchScopeButton.attributedTitle = NSAttributedString(
+            string: title,
+            attributes: [
+                .font: NSFont.systemFont(ofSize: 10.5, weight: .semibold),
+                .foregroundColor: isMac ? FPStyle.orange : FPStyle.text,
+                .paragraphStyle: paragraph
+            ]
+        )
+        sidebarSearchScopeButton.toolTip = isMac
+            ? "Искать на всём Mac. Нажмите, чтобы искать только в текущей папке"
+            : "Искать в текущей папке. Нажмите, чтобы искать на всём Mac"
+    }
+
     func syncSidebarSearchFromActivePanel() {
         if searchScope == .folder {
             sidebarSearchField.stringValue = activePanel?.searchQuery ?? ""
@@ -1655,19 +1676,22 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
     @objc private func toggleSearchScope(_ sender: Any?) {
         searchScope = searchScope == .folder ? .mac : .folder
         let isMac = searchScope == .mac
-        sidebarSearchScopeButton.title = isMac ? "Mac" : "Папка"
-        sidebarSearchScopeButton.toolTip = isMac
-            ? "Искать на всём Mac по имени и содержимому. Нажмите, чтобы искать только в текущей папке"
-            : "Искать в текущей папке. Нажмите, чтобы искать на всём Mac"
+        // Запрос запоминается до переключения: возврат в режим папки делает
+        // переход в текущую папку, а тот синхронизирует поле из панели, где
+        // запрос уже пустой — набранный текст затирался.
+        let pendingQuery = sidebarSearchField.stringValue
+        applySearchScopeAppearance()
         if !isMac {
             stopGlobalSearch()
             if let panel = activePanel {
                 panel.navigate(to: panel.currentURL, addingToHistory: false)
-                panel.setSearchQuery(sidebarSearchField.stringValue)
+                sidebarSearchField.stringValue = pendingQuery
+                panel.setSearchQuery(pendingQuery)
             }
         } else {
             activePanel?.setSearchQuery("")
-            routeSearch(sidebarSearchField.stringValue)
+            sidebarSearchField.stringValue = pendingQuery
+            routeSearch(pendingQuery)
         }
     }
 

@@ -138,9 +138,12 @@ enum FPSpotlightSearch {
                 NSMetadataItemDisplayNameKey,
                 pattern
             ),
+            // Поиск по содержимому файлов убран: Spotlight обходил тексты
+            // всех документов на диске, и запрос по имени файла тянулся
+            // секундами. По имени и отображаемому имени выдача мгновенная.
             NSPredicate(
                 format: "%K LIKE[cd] %@",
-                NSMetadataItemTextContentKey,
+                NSMetadataItemFSNameKey,
                 pattern
             )
         ])

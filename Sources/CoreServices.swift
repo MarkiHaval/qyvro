@@ -1452,3 +1452,100 @@ enum FPDiagnostics {
         }
     }
 }
+
+/// Фильтр ленты файлов.
+///
+/// Живёт рядом с сортировкой в нижней панели. Ключевой пункт — «отмечено
+/// сегодня»: он собирает всё удачное за день в одно выделение, которое можно
+/// разом перетащить в Фигму или на диск.
+enum FPGridFilter: String, CaseIterable {
+    case all
+    case images
+    case videos
+    case flagged
+    case flaggedToday
+    case today
+    case yesterday
+    case week
+    case heavy
+
+    var title: String {
+        switch self {
+        case .all: return "Все файлы"
+        case .images: return "Только картинки"
+        case .videos: return "Только видео"
+        case .flagged: return "★ Отмеченные"
+        case .flaggedToday: return "★ Отмечено сегодня"
+        case .today: return "Сегодня"
+        case .yesterday: return "Вчера"
+        case .week: return "За 7 дней"
+        case .heavy: return "Больше 20 МБ"
+        }
+    }
+
+    /// Короткая подпись для кнопки: в нижней панели мало места.
+    var shortTitle: String {
+        switch self {
+        case .all: return "Фильтр"
+        case .images: return "Картинки"
+        case .videos: return "Видео"
+        case .flagged: return "★"
+        case .flaggedToday: return "★ сегодня"
+        case .today: return "Сегодня"
+        case .yesterday: return "Вчера"
+        case .week: return "7 дней"
+        case .heavy: return "> 20 МБ"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .all: return "line.3.horizontal.decrease"
+        case .images: return "photo"
+        case .videos: return "film"
+        case .flagged, .flaggedToday: return "star.fill"
+        case .today, .yesterday, .week: return "calendar"
+        case .heavy: return "scalemass"
+        }
+    }
+
+    func matches(_ item: FileItem) -> Bool {
+        // Папки не прячутся никогда: иначе из отфильтрованной ленты нельзя
+        // никуда перейти.
+        if item.isDirectory { return true }
+        let ext = item.url.pathExtension.lowercased()
+        let calendar = Calendar.current
+        switch self {
+        case .all:
+            return true
+        case .images:
+            return FPMediaInfoCache.imageExtensions.contains(ext)
+        case .videos:
+            return FPMediaInfoCache.movieExtensions.contains(ext)
+        case .flagged:
+            return FPFinderTagStore.isFlagged(item.finderTags ?? [])
+        case .flaggedToday:
+            guard FPFinderTagStore.isFlagged(item.finderTags ?? []) else { return false }
+            // Время постановки отметки отдельно не хранится: метка пишется в
+            // расширенный атрибут файла, а системе это меняет дату изменения
+            // атрибутов. Её и спрашиваем — работает и для меток из Finder.
+            let values = try? item.url.resourceValues(
+                forKeys: [.attributeModificationDateKey]
+            )
+            guard let changed = values?.attributeModificationDate else { return false }
+            return calendar.isDateInToday(changed)
+        case .today:
+            guard let date = item.created ?? item.modified else { return false }
+            return calendar.isDateInToday(date)
+        case .yesterday:
+            guard let date = item.created ?? item.modified else { return false }
+            return calendar.isDateInYesterday(date)
+        case .week:
+            guard let date = item.created ?? item.modified else { return false }
+            guard let edge = calendar.date(byAdding: .day, value: -7, to: Date()) else { return false }
+            return date >= edge
+        case .heavy:
+            return (item.size ?? 0) > 20 * 1024 * 1024
+        }
+    }
+}
