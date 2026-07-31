@@ -242,7 +242,8 @@ final class FileGridScrollView: NSScrollView, NSDraggingSource {
         guard distance > 5, let urls = onDragFromDocument?(startPoint), !urls.isEmpty else { return }
 
         didBeginDrag = true
-        beginDraggingSession(with: draggingItems(for: urls, from: startPoint), event: event, source: self)
+        let dragged = FPUploadPrep.prepareIfRequested(urls, event: event)
+        beginDraggingSession(with: draggingItems(for: dragged, from: startPoint), event: event, source: self)
     }
 
     override func mouseUp(with event: NSEvent) {
@@ -741,8 +742,9 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         mouseDownPoint = nil
         defersExclusiveSelection = false
 
-        let urls = onDrag?(itemIndex) ?? []
-        guard !urls.isEmpty else { return }
+        let selected = onDrag?(itemIndex) ?? []
+        guard !selected.isEmpty else { return }
+        let urls = FPUploadPrep.prepareIfRequested(selected, event: event)
 
         let dragImage = previewImageView.image ?? NSWorkspace.shared.icon(forFile: urls[0].path)
         let draggingItems = urls.enumerated().map { offset, url -> NSDraggingItem in

@@ -1624,3 +1624,97 @@ enum FPGridFilter: String, CaseIterable {
         }
     }
 }
+
+/// Подготовка файла к загрузке в нейросеть прямо в момент перетаскивания.
+///
+/// Seedance принимает картинки не длиннее 5999 точек по большей стороне и не
+/// тяжелее 20 МБ. Обычное перетаскивание отдаёт оригинал, перетаскивание с
+/// зажатым ⌥ — уже подготовленный JPEG. Файл делается заранее и отдаётся как
+/// обычный, поэтому работает с любым получателем: браузером, Фигмой,
+/// Телеграмом. Обещанные файлы macOS для этого не годятся — веб-страницы в
+/// браузерах их не принимают.
+enum FPUploadPrep {
+    static let maxSide = 5999
+    static let maxBytes = 20 * 1024 * 1024
+
+    private static let directory: URL = {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("QyvroUpload", isDirectory: true)
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }()
+
+    /// Готовые файлы переживают повторные перетаскивания: подготовка тяжёлой
+    /// картинки занимает секунду, платить её дважды за один файл незачем.
+    private static var cache: [String: URL] = [:]
+
+    /// Готовит файлы, только если при начале перетаскивания зажат ⌥.
+    ///
+    /// Клавиша выбрана намеренно: `fn` на этой машине занята диктовкой, а
+    /// ⌥ при перетаскивании между приложениями и так означает «копировать»,
+    /// так что смысл не спорит с системным.
+    static func prepareIfRequested(_ urls: [URL], event: NSEvent) -> [URL] {
+        guard event.modifierFlags.contains(.option) else { return urls }
+        let prepared = prepare(urls)
+        FPActionLog.action(
+            "перетаскивание с ⌥: подготовлено к загрузке",
+            "\(prepared.count) файлов, лимит \(maxSide)px и 20 МБ"
+        )
+        return prepared
+    }
+
+    static func canPrepare(_ url: URL) -> Bool {
+        FPMediaInfoCache.imageExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    /// Возвращает подготовленные копии. Файлы, которые готовить не нужно или
+    /// не получилось, отдаются как есть — перетаскивание не должно срываться
+    /// из-за одной картинки.
+    static func prepare(_ urls: [URL]) -> [URL] {
+        urls.map { url in
+            guard canPrepare(url) else { return url }
+            let values = try? url.resourceValues(
+                forKeys: [.fileSizeKey, .contentModificationDateKey]
+            )
+            let stamp = "\(url.path)|\(values?.fileSize ?? 0)|"
+                + "\(values?.contentModificationDate?.timeIntervalSince1970 ?? 0)"
+            if let ready = cache[stamp], FileManager.default.fileExists(atPath: ready.path) {
+                return ready
+            }
+            guard let prepared = convert(url) else { return url }
+            cache[stamp] = prepared
+            return prepared
+        }
+    }
+
+    private static func convert(_ url: URL) -> URL? {
+        let name = url.deletingPathExtension().lastPathComponent
+        let target = directory.appendingPathComponent("\(name).jpg")
+        try? FileManager.default.removeItem(at: target)
+
+        // Качество подбирается сверху вниз: сначала пробуем близкое к
+        // исходному, и снижаем, только пока файл не влезает в лимит.
+        for quality in ["0.92", "0.85", "0.75", "0.6"] {
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/sips")
+            task.arguments = [
+                "-s", "format", "jpeg",
+                "-s", "formatOptions", quality,
+                "-Z", "\(maxSide)",
+                url.path,
+                "--out", target.path
+            ]
+            task.standardOutput = FileHandle.nullDevice
+            task.standardError = FileHandle.nullDevice
+            guard (try? task.run()) != nil else { return nil }
+            task.waitUntilExit()
+            guard task.terminationStatus == 0,
+                  let size = try? target.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+                return nil
+            }
+            if size <= maxBytes { return target }
+        }
+        // Даже на минимальном качестве не влезло — отдаём что получилось.
+        return FileManager.default.fileExists(atPath: target.path) ? target : nil
+    }
+}
