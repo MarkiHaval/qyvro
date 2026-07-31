@@ -236,6 +236,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             existing.replaceFocusedPane(with: request)
             return
         }
+        // Выбор файла в сетке не должен распахивать просмотрщик — он лишь
+        // подставляет кадр в уже открытый.
+        if request.updatesOpenPreviewOnly { return }
         let controller = previewWindowController ?? {
             let created = FPPreviewWindowController()
             created.onNeedsRefresh = { [weak self] in

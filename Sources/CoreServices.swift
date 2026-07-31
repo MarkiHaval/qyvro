@@ -28,6 +28,10 @@ struct FPQuickLookRequest {
     let initialIndex: Int
     let columnCount: Int
     let onIndexChanged: ((URL) -> Void)?
+    /// Запрос от простого выбора файла в сетке: он подставляет кадр в уже
+    /// открытый просмотрщик, но сам его не открывает. Иначе каждое нажатие
+    /// на файл распахивало бы окно просмотра.
+    var updatesOpenPreviewOnly: Bool = false
 }
 
 enum FPDirectorySizeCalculator {

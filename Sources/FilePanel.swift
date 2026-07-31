@@ -2162,6 +2162,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         footerLabel.stringValue = footerText()
         syncFolderPocketToSelection()
         notifySelectionChanged()
+        pushSelectionToOpenPreview()
     }
 
     private func syncFolderPocketToSelection() {
@@ -3344,7 +3345,33 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                 self?.select(url: url)
             }
         )
+        FPActionLog.action("превью открыто", selected.url.lastPathComponent)
         onQuickLook?(request)
+    }
+
+    /// Подставляет выбранный файл в открытый просмотрщик.
+    ///
+    /// Просмотрщик остаётся на экране, пока человек ходит по сетке: выбрал
+    /// другой файл — он встал в выделенную панель сравнения. Если окна нет,
+    /// запрос ничего не делает.
+    private func pushSelectionToOpenPreview() {
+        guard let selected = selectedItems.first, !selected.isDirectory else { return }
+        let entries = filteredItems.enumerated().compactMap { index, item -> FPQuickLookGalleryEntry? in
+            guard !item.isDirectory else { return nil }
+            return FPQuickLookGalleryEntry(url: item.url, visualIndex: index)
+        }
+        guard let initialIndex = entries.firstIndex(where: {
+            $0.url.standardizedFileURL == selected.url.standardizedFileURL
+        }) else { return }
+        onQuickLook?(
+            FPQuickLookRequest(
+                entries: entries,
+                initialIndex: initialIndex,
+                columnCount: viewMode == .largeIcons ? max(1, gridColumnCount) : 1,
+                onIndexChanged: { [weak self] url in self?.select(url: url) },
+                updatesOpenPreviewOnly: true
+            )
+        )
     }
 
     @objc func revealSelection(_ sender: Any?) {
