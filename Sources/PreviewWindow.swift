@@ -814,6 +814,25 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
 
     private func installCurtain() {
         guard curtain.superview == nil else { return }
+        // Окно возвращается к разумному размеру: до правки приоритетов оно
+        // успевало раздуться, и след от этого оставался в сохранённой рамке.
+        if let window, let visible = (window.screen ?? NSScreen.main)?.visibleFrame {
+            let size = NSSize(
+                width: min(window.frame.width, visible.width * 0.9),
+                height: min(window.frame.height, visible.height * 0.9)
+            )
+            if size != window.frame.size {
+                window.setFrame(
+                    NSRect(
+                        x: visible.midX - size.width / 2,
+                        y: visible.midY - size.height / 2,
+                        width: size.width,
+                        height: size.height
+                    ).integral,
+                    display: true
+                )
+            }
+        }
         curtain.translatesAutoresizingMaskIntoConstraints = false
         curtain.applyTheme()
         contentView.addSubview(curtain)
@@ -936,7 +955,18 @@ final class FPCurtainCompareView: NSView {
             view.imageScaling = .scaleProportionallyUpOrDown
             view.animates = false
             view.translatesAutoresizingMaskIntoConstraints = false
+            // Вид с картинкой требует размер по самому изображению. Без сброса
+            // приоритетов два кадра 5504×3072 растягивали окно далеко за
+            // пределы экрана.
+            view.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            view.setContentHuggingPriority(.defaultLow, for: .vertical)
+            view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            view.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         }
+        setContentHuggingPriority(.defaultLow, for: .horizontal)
+        setContentHuggingPriority(.defaultLow, for: .vertical)
+        setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         leftClip.wantsLayer = true
         leftClip.layer?.masksToBounds = true
         leftClip.translatesAutoresizingMaskIntoConstraints = false

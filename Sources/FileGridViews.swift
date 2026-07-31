@@ -1011,6 +1011,7 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
 final class GridSectionHeaderView: FPLayerView {
     private let titleField = NSTextField(labelWithString: "")
     private let toggleButton = NSButton()
+    private let scrollHint = NSTextField(labelWithString: "")
     private let separator = CALayer()
     var sectionID = ""
     var onToggle: ((String) -> Void)?
@@ -1035,9 +1036,18 @@ final class GridSectionHeaderView: FPLayerView {
         toggleButton.action = #selector(togglePressed(_:))
         toggleButton.translatesAutoresizingMaskIntoConstraints = false
 
+        // Подсказка о боковом листании: сама возможность есть, но узнать о
+        // ней в интерфейсе было неоткуда.
+        scrollHint.font = FPStyle.headingFont(ofSize: 9.5, weight: .semibold)
+        scrollHint.textColor = FPStyle.dimText.withAlphaComponent(0.62)
+        scrollHint.stringValue = "⇧ + ПРОКРУТКА"
+        scrollHint.translatesAutoresizingMaskIntoConstraints = false
+        scrollHint.isHidden = true
+
         separator.backgroundColor = FPStyle.stroke.withAlphaComponent(0.7).cgColor
         layer?.addSublayer(separator)
         addSubview(titleField)
+        addSubview(scrollHint)
         addSubview(toggleButton)
 
         NSLayoutConstraint.activate([
@@ -1045,7 +1055,9 @@ final class GridSectionHeaderView: FPLayerView {
             titleField.centerYAnchor.constraint(equalTo: centerYAnchor),
             toggleButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
             toggleButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            toggleButton.leadingAnchor.constraint(greaterThanOrEqualTo: titleField.trailingAnchor, constant: 12)
+            scrollHint.leadingAnchor.constraint(equalTo: titleField.trailingAnchor, constant: 12),
+            scrollHint.centerYAnchor.constraint(equalTo: centerYAnchor),
+            toggleButton.leadingAnchor.constraint(greaterThanOrEqualTo: scrollHint.trailingAnchor, constant: 12)
         ])
     }
 
@@ -1067,6 +1079,10 @@ final class GridSectionHeaderView: FPLayerView {
             weight: .semibold
         )
         toggleButton.isHidden = !canToggle
+        // Подсказка нужна только там, где ряд действительно длиннее экрана:
+        // на коротком разделе она была бы обманом.
+        scrollHint.isHidden = !(canToggle && !expanded)
+        scrollHint.textColor = FPStyle.dimText.withAlphaComponent(0.62)
         let buttonTitle = expanded ? "Показать меньше" : "Показать все (\(totalCount))"
         toggleButton.attributedTitle = NSAttributedString(
             string: buttonTitle,
