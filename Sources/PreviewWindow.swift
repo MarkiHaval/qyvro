@@ -325,6 +325,7 @@ final class FPPreviewContentView: NSView {
             ("F", "отметить"),
             ("⌫", "в корзину"),
             ("C", "сравнение"),
+            ("V", "шторка"),
             ("T", "во весь экран"),
             ("Esc", "закрыть")
         ]
@@ -448,6 +449,8 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     /// внутри панели забирает фокус себе при создании, и `keyDown` до нашего
     /// содержимого не доходит.
     private var keyMonitor: Any?
+    private let curtain = FPCurtainCompareView(frame: .zero)
+    private var isCurtainMode = false
     /// Рамка окна до растягивания на экран, чтобы вернуть её обратно.
     private var framedBeforeMaximize: NSRect?
 
@@ -626,6 +629,8 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         updateFocusRings()
         updateTitle()
         refreshCaption()
+        curtain.isHidden = !isCurtainMode
+        updateCurtainImages()
         if let url = focusedURL { onIndexChanged?(url) }
     }
 
@@ -733,6 +738,62 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         return false
     }
 
+    /// Включает сравнение шторкой поверх панелей.
+    ///
+    /// Шторке нужны ровно два кадра, поэтому при включении число панелей
+    /// доводится до двух: иначе непонятно, какие варианты накладывать.
+    private func toggleCurtain() {
+        isCurtainMode.toggle()
+        FPActionLog.action("шторка → \(isCurtainMode ? "включена" : "выключена")")
+        if isCurtainMode {
+            if paneCount < 2 {
+                paneCount = 2
+                normalizePaneIndices()
+                rebuildPanes()
+            }
+            installCurtain()
+        } else {
+            curtain.removeFromSuperview()
+        }
+        refreshPanes()
+    }
+
+    private func installCurtain() {
+        guard curtain.superview == nil else { return }
+        curtain.translatesAutoresizingMaskIntoConstraints = false
+        curtain.applyTheme()
+        contentView.addSubview(curtain)
+        NSLayoutConstraint.activate([
+            curtain.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 40),
+            curtain.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
+            curtain.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
+            curtain.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -32)
+        ])
+    }
+
+    /// Кадры для шторки берутся миниатюрами: полноразмерный QLPreviewView
+    /// наложить друг на друга нельзя, а для сравнения деталей хватает
+    /// изображения в размер экрана.
+    private func updateCurtainImages() {
+        guard isCurtainMode else { return }
+        let urls = paneIndices.prefix(2).compactMap { index -> URL? in
+            entries.indices.contains(index) ? entries[index].url : nil
+        }
+        guard urls.count == 2 else { return }
+        let side = max(curtain.bounds.width, 1200)
+        DispatchQueue.global(qos: .userInitiated).async {
+            let images = urls.map { url -> NSImage? in
+                NSImage(contentsOf: url)
+                    ?? NSWorkspace.shared.icon(forFile: url.path)
+            }
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.isCurtainMode else { return }
+                _ = side
+                self.curtain.setImages(left: images.first ?? nil, right: images.last ?? nil)
+            }
+        }
+    }
+
     private func cyclePaneCount() {
         let previous = paneCount
         paneCount = paneCount % 3 + 1
@@ -758,6 +819,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         case 51: trashFocused()                       // ⌫
         case 3: focusedURL.map(toggleFlag)            // F
         case 8: cyclePaneCount()                      // C
+        case 9: toggleCurtain()                       // V — шторка
         case 17: toggleMaximized()                    // T — на весь экран
         case 18, 19, 20 where paneCount > 1:          // 1, 2, 3 — выбор панели
             let requested = Int(event.charactersIgnoringModifiers ?? "1") ?? 1
@@ -774,5 +836,123 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         contentView.panes.forEach { $0.teardown() }
         entries.removeAll()
         onIndexChanged = nil
+    }
+}
+
+/// Сравнение шторкой: два кадра наложены друг на друга, между ними подвижная
+/// вертикальная граница.
+///
+/// Панели рядом хороши, когда варианты различаются заметно. Когда разница в
+/// деталях — цвет кожи, детализация ткани, — глазу нужно видеть их в одной
+/// точке экрана. Шторка это и даёт: тянешь границу и видишь, где кадры
+/// расходятся.
+final class FPCurtainCompareView: NSView {
+    private let leftView = NSImageView()
+    private let rightView = NSImageView()
+    private let leftClip = NSView()
+    private let handle = FPLayerView(color: .clear)
+    private let handleGrip = FPLayerView(color: .clear, cornerRadius: 9)
+    private var position: CGFloat = 0.5
+    private var isDragging = false
+
+    /// Подпись рассказывает, что слева и что справа: без неё через минуту
+    /// работы уже не помнишь, какой вариант с какой стороны.
+    var onPositionChanged: ((CGFloat) -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.masksToBounds = true
+
+        for view in [leftView, rightView] {
+            view.imageScaling = .scaleProportionallyUpOrDown
+            view.animates = false
+            view.translatesAutoresizingMaskIntoConstraints = false
+        }
+        leftClip.wantsLayer = true
+        leftClip.layer?.masksToBounds = true
+        leftClip.translatesAutoresizingMaskIntoConstraints = false
+        handle.translatesAutoresizingMaskIntoConstraints = false
+        handleGrip.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(rightView)
+        addSubview(leftClip)
+        leftClip.addSubview(leftView)
+        addSubview(handle)
+        handle.addSubview(handleGrip)
+
+        NSLayoutConstraint.activate([
+            rightView.topAnchor.constraint(equalTo: topAnchor),
+            rightView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            rightView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            rightView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            // Левый кадр всегда во всю ширину, обрезает его контейнер — иначе
+            // картинка сжималась бы при движении границы вместо среза.
+            leftView.topAnchor.constraint(equalTo: topAnchor),
+            leftView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            leftView.widthAnchor.constraint(equalTo: widthAnchor),
+            leftView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            leftClip.topAnchor.constraint(equalTo: topAnchor),
+            leftClip.leadingAnchor.constraint(equalTo: leadingAnchor),
+            leftClip.bottomAnchor.constraint(equalTo: bottomAnchor),
+            handle.topAnchor.constraint(equalTo: topAnchor),
+            handle.bottomAnchor.constraint(equalTo: bottomAnchor),
+            handle.widthAnchor.constraint(equalToConstant: 24),
+            handleGrip.centerXAnchor.constraint(equalTo: handle.centerXAnchor),
+            handleGrip.centerYAnchor.constraint(equalTo: handle.centerYAnchor),
+            handleGrip.widthAnchor.constraint(equalToConstant: 18),
+            handleGrip.heightAnchor.constraint(equalToConstant: 44)
+        ])
+        applyTheme()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func applyTheme() {
+        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.22).cgColor
+        handleGrip.layer?.backgroundColor = FPStyle.orange.withAlphaComponent(0.92).cgColor
+        handleGrip.layer?.borderColor = NSColor.black.withAlphaComponent(0.35).cgColor
+        handleGrip.layer?.borderWidth = 1
+    }
+
+    func setImages(left: NSImage?, right: NSImage?) {
+        leftView.image = left
+        rightView.image = right
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        let split = bounds.width * position
+        leftClip.frame = NSRect(x: 0, y: 0, width: split, height: bounds.height)
+        leftView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
+        handle.frame = NSRect(x: split - 12, y: 0, width: 24, height: bounds.height)
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(handle.frame, cursor: .resizeLeftRight)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        isDragging = abs(point.x - bounds.width * position) <= 18
+        if isDragging { move(to: point.x) }
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isDragging else { return }
+        move(to: convert(event.locationInWindow, from: nil).x)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        isDragging = false
+    }
+
+    private func move(to x: CGFloat) {
+        guard bounds.width > 1 else { return }
+        position = min(max(x / bounds.width, 0), 1)
+        needsLayout = true
+        layoutSubtreeIfNeeded()
+        onPositionChanged?(position)
     }
 }
