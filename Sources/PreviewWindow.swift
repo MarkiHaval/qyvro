@@ -21,7 +21,6 @@ final class FPPreviewPane: NSView {
     /// движении мыши, а повлиять на это снаружи нельзя. Свой плеер даёт
     /// плавающие элементы управления, которыми управляем мы.
     private var playerView: AVPlayerView?
-    private var playerHideWorkItem: DispatchWorkItem?
     private static let cacheLimit = 4
     private var cache: [(url: URL, view: QLPreviewView)] = []
     private var previousURL: URL?
@@ -162,7 +161,6 @@ final class FPPreviewPane: NSView {
                 player.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor)
             ])
             playerView = player
-            installPlayerHoverTracking(on: player)
             nameText = url.lastPathComponent
             refreshFlag()
             refreshDetail(for: url)
@@ -192,34 +190,11 @@ final class FPPreviewPane: NSView {
         refreshDetail(for: url)
     }
 
-    /// Панель воспроизведения прячется через полторы секунды после того, как
-    /// курсор ушёл с кадра, и возвращается при наведении.
-    private func installPlayerHoverTracking(on player: AVPlayerView) {
-        let area = NSTrackingArea(
-            rect: .zero,
-            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
-            owner: self,
-            userInfo: ["player": true]
-        )
-        player.addTrackingArea(area)
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        guard event.trackingArea?.userInfo?["player"] != nil else { return }
-        playerHideWorkItem?.cancel()
-        playerView?.controlsStyle = .floating
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        guard event.trackingArea?.userInfo?["player"] != nil else { return }
-        playerHideWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.playerView?.controlsStyle = .none
-        }
-        playerHideWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
-    }
-
+    /// Показ и скрытие элементов управления оставлены самому плееру.
+    ///
+    /// Ручное переключение стиля прятало панель, но оставляло на кадре
+    /// размытую плашку-подложку: она рисуется отдельно и не убирается вместе
+    /// с кнопками. Родное поведение AVPlayerView прячет и то и другое.
     func refreshFlag() {
         guard let url else { return }
         flagBadge.isHidden = false

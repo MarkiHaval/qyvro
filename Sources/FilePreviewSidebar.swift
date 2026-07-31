@@ -188,6 +188,11 @@ final class FilePreviewSidebar: NSVisualEffectView {
                 accessibilityDescription: nil
             )
             copyPathButton.imagePosition = .imageLeading
+            // Без явного выравнивания AppKit прижимает связку «значок + текст»
+            // к левому краю кнопки, и значок вылезал за скругление.
+            copyPathButton.alignment = .center
+            copyPathButton.imageHugsTitle = true
+            copyPathButton.imageScaling = .scaleProportionallyDown
         }
 
         addSubview(header)
