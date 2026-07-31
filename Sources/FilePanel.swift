@@ -898,6 +898,11 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         gridScrollView.onMagnify = { [weak self] amount in
             self?.applyPinchScale(amount)
         }
+        gridScrollView.onZoomScroll = { [weak self] delta in
+            // Шаг подбирается пользователем: у разных мышей щелчок колеса даёт
+            // очень разную величину, единого правильного числа нет.
+            self?.applyPinchScale(delta * 0.006 * CGFloat(FPPreferences.wheelZoomSensitivity))
+        }
         gridScrollView.onMouseDownInDocument = { [weak self] point, event in
             self?.handleGridMouseDown(at: point, event: event)
         }

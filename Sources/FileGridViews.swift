@@ -177,6 +177,8 @@ final class FileGridScrollView: NSScrollView, NSDraggingSource {
     /// Возвращает true, если прокрутка ушла в свёрнутый ряд под курсором.
     /// Точка передаётся в системе координат документа сетки.
     var onSectionScroll: ((NSPoint, CGFloat) -> Bool)?
+    /// Ctrl с колесом: положительное значение — увеличить значки.
+    var onZoomScroll: ((CGFloat) -> Void)?
     /// Щипок двумя пальцами: положительное значение — раздвигание.
     var onMagnify: ((CGFloat) -> Void)?
 
@@ -276,16 +278,35 @@ final class FileGridScrollView: NSScrollView, NSDraggingSource {
     }
 
     override func scrollWheel(with event: NSEvent) {
-        // С зажатым Shift колесо прокручивает свёрнутый ряд под курсором, а не
-        // уводит назад по истории: жест листания папок остаётся нетронутым.
-        if event.modifierFlags.contains(.shift),
-           let onSectionScroll,
-           let documentView {
-            let point = documentView.convert(event.locationInWindow, from: nil)
-            let delta = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
-                ? event.scrollingDeltaX
-                : event.scrollingDeltaY
-            if onSectionScroll(point, delta) { return }
+        // Ctrl с колесом меняет размер значков — жест для мыши, у которой нет
+        // щипка двумя пальцами.
+        if event.modifierFlags.contains(.control), let onZoomScroll {
+            let raw = abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX)
+                ? event.scrollingDeltaY
+                : event.scrollingDeltaX
+            // Колесо мыши шлёт дискретные щелчки, трекпад — плавные значения в
+            // точках. Без разных множителей на мыши шаг был бы незаметным.
+            onZoomScroll(event.hasPreciseScrollingDeltas ? raw : raw * 6)
+            return
+        }
+        // С зажатым Shift колесо прокручивает свёрнутый ряд под курсором.
+        //
+        // Событие не отдаётся дальше ни при каких условиях: раньше, когда ряд
+        // упирался в край, оно проваливалось в обработчик жеста и срабатывало
+        // перелистывание истории — человек листал ленту, а его уносило в
+        // другую папку.
+        if event.modifierFlags.contains(.shift) {
+            if let onSectionScroll, let documentView {
+                let point = documentView.convert(event.locationInWindow, from: nil)
+                let raw = abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY)
+                    ? event.scrollingDeltaX
+                    : event.scrollingDeltaY
+                let delta = event.hasPreciseScrollingDeltas ? raw : raw * 6
+                if onSectionScroll(point, delta) { return }
+            }
+            // Ряд не сдвинулся — пусть работает обычная прокрутка, но не жест.
+            super.scrollWheel(with: event)
+            return
         }
         if horizontalSwipeTracker.handle(
             event,

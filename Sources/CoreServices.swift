@@ -901,6 +901,14 @@ enum FPPreferences {
         return min(max(UserDefaults.standard.double(forKey: "SwipeSensitivity"), 10), 100)
     }
 
+    /// Шаг изменения размера значков колесом мыши с зажатым Ctrl.
+    static var wheelZoomSensitivity: Double {
+        guard UserDefaults.standard.object(forKey: "WheelZoomSensitivity") != nil else {
+            return 50
+        }
+        return min(max(UserDefaults.standard.double(forKey: "WheelZoomSensitivity"), 10), 150)
+    }
+
     /// Держать ли окно проводника поверх остальных постоянно.
     static var keepsExplorerOnTop: Bool {
         UserDefaults.standard.bool(forKey: "AlwaysOnTop")

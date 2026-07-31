@@ -1204,6 +1204,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         )
         previewOpacitySlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
         previewOpacitySlider.toolTip = "Прозрачность окна просмотра"
+        let wheelZoomSlider = NSSlider(
+            value: FPPreferences.wheelZoomSensitivity,
+            minValue: 10, maxValue: 150, target: nil, action: nil
+        )
+        wheelZoomSlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        wheelZoomSlider.toolTip = "Насколько сильно Ctrl с колесом мыши меняет размер значков"
         let swipeSensitivitySlider = NSSlider(value: FPPreferences.swipeSensitivity, minValue: 10, maxValue: 100, target: nil, action: nil)
         swipeSensitivitySlider.numberOfTickMarks = 10
         swipeSensitivitySlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
@@ -1256,10 +1262,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         stack.addArrangedSubview(settingsRow(title: "Прозрачность просмотра", control: previewOpacitySlider))
         stack.addArrangedSubview(settingsRow(title: "Расстояние в сетке", control: spacingSlider))
         stack.addArrangedSubview(settingsRow(title: "Чувствительность жеста", control: swipeSensitivitySlider))
+        stack.addArrangedSubview(settingsRow(title: "Шаг колеса мыши", control: wheelZoomSlider))
         stack.addArrangedSubview(settingsRow(title: "Навигация", control: swipeModeToggle))
         stack.addArrangedSubview(settingsRow(title: "Большие папки", control: groupToggle))
         stack.addArrangedSubview(settingsRow(title: "Оформление", control: gradientToggle))
-        stack.frame = NSRect(x: 0, y: 0, width: 410, height: 570)
+        stack.frame = NSRect(x: 0, y: 0, width: 410, height: 605)
         alert.accessoryView = stack
 
         let response = alert.runModal()
@@ -1279,6 +1286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             UserDefaults.standard.set(previewOpacitySlider.doubleValue, forKey: "PreviewWindowOpacity")
             UserDefaults.standard.set(spacingSlider.doubleValue, forKey: "GridSpacing")
             UserDefaults.standard.set(swipeSensitivitySlider.doubleValue, forKey: "SwipeSensitivity")
+            UserDefaults.standard.set(wheelZoomSlider.doubleValue, forKey: "WheelZoomSensitivity")
             UserDefaults.standard.set(swipeModeToggle.state == .on, forKey: "SwipeNavigationInverted")
             UserDefaults.standard.set(groupToggle.state == .on, forKey: "GroupLargeFoldersByDate")
             UserDefaults.standard.set(gradientToggle.state == .on, forKey: "ThemeGradientEnabled")
@@ -1289,7 +1297,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 "ThemeFolderColor", "ThemeAccentColor", "ThemeOrangeColor",
                 "ThemeGradientStart", "ThemeGradientEnd", "ThemeGradientEnabled",
                 "ThemePaneOpacity", "ThemeSidebarOpacity", "PreviewWindowOpacity", "GridSpacing",
-                "SwipeSensitivity", "SwipeNavigationInverted", "GroupLargeFoldersByDate"
+                "SwipeSensitivity", "WheelZoomSensitivity",
+                "SwipeNavigationInverted", "GroupLargeFoldersByDate"
             ] {
                 UserDefaults.standard.removeObject(forKey: key)
             }
