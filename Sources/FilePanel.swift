@@ -81,6 +81,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     private let viewScaleButton = HoverButton()
     private let sortButton = SortPillButton()
     private let filterButton = SortPillButton()
+    private let diskRing = FPDiskUsageRing()
     private var gridFilter: FPGridFilter = .all
     private let swipeIndicator = SwipeNavigationIndicator(frame: NSRect(x: 0, y: 0, width: 66, height: 68))
     private let swipeWaveOverlay = SwipeSurfaceWaveView()
@@ -572,9 +573,13 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
 
         let sortControl = sortMenuControl()
         let filterControl = filterMenuControl()
+        let diskControl = diskRingControl()
         let sizeControl = iconSizeControl()
         let footerRow = NSStackView(
-            views: [footerLabel, errorLabel, footerSpacer, filterControl, sortControl, sizeControl]
+            views: [
+                footerLabel, errorLabel, footerSpacer,
+                diskControl, filterControl, sortControl, sizeControl
+            ]
         )
         footerRow.orientation = .horizontal
         footerRow.spacing = 8
@@ -717,6 +722,27 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         sortButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
         syncSortControl()
         return sortButton
+    }
+
+    /// Кольцо занятости диска. Разбивка по типам считается один раз за сеанс
+    /// и в фоне: обход индекса Spotlight занимает секунды.
+    private func diskRingControl() -> NSView {
+        diskRing.translatesAutoresizingMaskIntoConstraints = false
+        diskRing.widthAnchor.constraint(equalToConstant: 26).isActive = true
+        diskRing.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        diskRing.onSegmentPicked = { [weak self] filter in
+            guard let self else { return }
+            FPActionLog.action("кольцо диска → \(filter.title)")
+            self.gridFilter = filter
+            self.syncFilterControl()
+            self.loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
+        }
+        FPDiskUsage.refreshCapacity()
+        diskRing.update(FPDiskUsage.snapshot)
+        FPDiskUsage.refreshBreakdown { [weak self] in
+            self?.diskRing.update(FPDiskUsage.snapshot)
+        }
+        return diskRing
     }
 
     private func filterMenuControl() -> NSView {

@@ -1784,3 +1784,95 @@ enum FPVersionGrouping {
         }
     }
 }
+
+/// Занятость диска с разбивкой по типам файлов.
+///
+/// Общий объём и свободное место берутся у самого тома — это точно и мгновенно.
+/// Разбивка по типам считается Spotlight в фоне: обходить диск самим слишком
+/// дорого, а индекс уже знает и тип, и размер каждого файла.
+enum FPDiskUsage {
+    struct Snapshot {
+        var total: Int64 = 0
+        var free: Int64 = 0
+        var images: Int64 = 0
+        var videos: Int64 = 0
+        /// Занято всем остальным: система, программы, документы, архивы.
+        var other: Int64 { max(0, total - free - images - videos) }
+        var used: Int64 { max(0, total - free) }
+        var hasBreakdown: Bool { images > 0 || videos > 0 }
+    }
+
+    private static var cached = Snapshot()
+    private static var query: NSMetadataQuery?
+    private static var observers: [NSObjectProtocol] = []
+
+    static var snapshot: Snapshot { cached }
+
+    /// Читает объём тома. Быстро, поэтому вызывается при каждом показе.
+    static func refreshCapacity() {
+        let url = URL(fileURLWithPath: NSHomeDirectory())
+        guard let values = try? url.resourceValues(forKeys: [
+            .volumeTotalCapacityKey,
+            .volumeAvailableCapacityForImportantUsageKey
+        ]) else { return }
+        cached.total = Int64(values.volumeTotalCapacity ?? 0)
+        if let important = values.volumeAvailableCapacityForImportantUsage {
+            cached.free = Int64(important)
+        }
+    }
+
+    /// Запускает подсчёт по типам. Результат кэшируется на весь сеанс:
+    /// пересчитывать его на каждый показ незачем, картина за минуты не меняется.
+    static func refreshBreakdown(completion: @escaping () -> Void) {
+        guard !cached.hasBreakdown, query == nil else {
+            completion()
+            return
+        }
+        let metadataQuery = NSMetadataQuery()
+        metadataQuery.searchScopes = [NSMetadataQueryLocalComputerScope]
+        metadataQuery.predicate = NSCompoundPredicate(orPredicateWithSubpredicates: [
+            NSPredicate(format: "kMDItemContentTypeTree == %@", "public.image"),
+            NSPredicate(format: "kMDItemContentTypeTree == %@", "public.movie")
+        ])
+        metadataQuery.valueListAttributes = [NSMetadataItemFSSizeKey]
+
+        let finish: (Notification) -> Void = { _ in
+            metadataQuery.disableUpdates()
+            var images: Int64 = 0
+            var videos: Int64 = 0
+            for index in 0..<metadataQuery.resultCount {
+                guard let item = metadataQuery.result(at: index) as? NSMetadataItem,
+                      let size = item.value(forAttribute: NSMetadataItemFSSizeKey) as? NSNumber
+                else { continue }
+                let type = item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String]
+                if type?.contains("public.movie") == true {
+                    videos += size.int64Value
+                } else {
+                    images += size.int64Value
+                }
+            }
+            cached.images = images
+            cached.videos = videos
+            metadataQuery.stop()
+            observers.forEach(NotificationCenter.default.removeObserver)
+            observers.removeAll()
+            query = nil
+            FPActionLog.result(
+                "разбивка диска посчитана",
+                "картинки \(images / 1_048_576) МБ, видео \(videos / 1_048_576) МБ"
+            )
+            DispatchQueue.main.async { completion() }
+        }
+
+        observers.append(
+            NotificationCenter.default.addObserver(
+                forName: .NSMetadataQueryDidFinishGathering,
+                object: metadataQuery,
+                queue: .main,
+                using: finish
+            )
+        )
+        query = metadataQuery
+        metadataQuery.start()
+    }
+}

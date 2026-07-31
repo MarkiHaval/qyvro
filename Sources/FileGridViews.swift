@@ -1824,3 +1824,96 @@ final class FPVersionCountBadge: NSView {
         )
     }
 }
+
+/// Кольцо занятости диска в нижней панели.
+///
+/// Небольшое и без подписей: цифры мешали бы, а картина «сколько занято и чем»
+/// читается с одного взгляда. Сегменты кликабельны — нажатие открывает все
+/// файлы этого типа на компьютере.
+final class FPDiskUsageRing: NSControl {
+    private var snapshot = FPDiskUsage.Snapshot()
+    /// Какой сегмент нажали: картинки, видео или всё остальное.
+    var onSegmentPicked: ((FPGridFilter) -> Void)?
+
+    override var intrinsicContentSize: NSSize { NSSize(width: 26, height: 26) }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    func update(_ value: FPDiskUsage.Snapshot) {
+        snapshot = value
+        toolTip = tooltipText()
+        needsDisplay = true
+    }
+
+    private func tooltipText() -> String {
+        func megabytes(_ value: Int64) -> String {
+            ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
+        }
+        guard snapshot.total > 0 else { return "Занятость диска" }
+        var lines = ["Свободно \(megabytes(snapshot.free)) из \(megabytes(snapshot.total))"]
+        if snapshot.hasBreakdown {
+            lines.append("Картинки \(megabytes(snapshot.images))")
+            lines.append("Видео \(megabytes(snapshot.videos))")
+            lines.append("Остальное \(megabytes(snapshot.other))")
+            lines.append("Нажмите на сегмент, чтобы открыть эти файлы")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private var segments: [(share: CGFloat, color: NSColor, filter: FPGridFilter?)] {
+        guard snapshot.total > 0 else { return [] }
+        let total = CGFloat(snapshot.total)
+        return [
+            (CGFloat(snapshot.images) / total, FPStyle.accent, .images),
+            (CGFloat(snapshot.videos) / total, FPStyle.orange, .videos),
+            (CGFloat(snapshot.other) / total, FPStyle.dimText.withAlphaComponent(0.55), nil),
+            (CGFloat(snapshot.free) / total, FPStyle.stroke.withAlphaComponent(0.30), nil)
+        ]
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard snapshot.total > 0 else { return }
+        let inset = bounds.insetBy(dx: 3, dy: 3)
+        let center = NSPoint(x: inset.midX, y: inset.midY)
+        let radius = min(inset.width, inset.height) / 2
+        var angle: CGFloat = 90
+
+        for segment in segments where segment.share > 0.001 {
+            let sweep = segment.share * 360
+            let path = NSBezierPath()
+            path.appendArc(
+                withCenter: center,
+                radius: radius,
+                startAngle: angle,
+                endAngle: angle + sweep
+            )
+            segment.color.setStroke()
+            path.lineWidth = 4
+            path.lineCapStyle = .butt
+            path.stroke()
+            angle += sweep
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard snapshot.total > 0 else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let center = NSPoint(x: bounds.midX, y: bounds.midY)
+        // Угол клика переводится в долю круга и сопоставляется с сегментами в
+        // том же порядке, в каком они нарисованы.
+        var degrees = atan2(point.y - center.y, point.x - center.x) * 180 / .pi - 90
+        while degrees < 0 { degrees += 360 }
+        var start: CGFloat = 0
+        for segment in segments {
+            let sweep = segment.share * 360
+            if degrees >= start, degrees < start + sweep {
+                guard let filter = segment.filter else { return }
+                onSegmentPicked?(filter)
+                return
+            }
+            start += sweep
+        }
+    }
+}
