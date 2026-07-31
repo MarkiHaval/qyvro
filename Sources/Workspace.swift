@@ -1052,7 +1052,14 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         rootSplitView.addArrangedSubview(previewSidebar)
         // Preserve the native split-view resizing behavior used before the
         // editorial theme. The divider itself owns the drag interaction.
-        rootSplitView.setHoldingPriority(.required, forSubviewAt: 0)
+        // Обязательный приоритет удержания означал «эта панель не меняет
+        // ширину никогда» — разделитель перетаскивался, но setPosition тут же
+        // отменялся. Значение чуть выше приоритета содержимого сохраняет
+        // ширину при изменении размера окна и при этом пускает ручку.
+        rootSplitView.setHoldingPriority(
+            NSLayoutConstraint.Priority(260),
+            forSubviewAt: 0
+        )
         rootSplitView.setHoldingPriority(.required, forSubviewAt: 2)
         previewSidebar.setContentHuggingPriority(.defaultLow, for: .horizontal)
         previewSidebar.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -1069,8 +1076,10 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
                 NSPoint(x: windowX, y: self.rootSplitView.bounds.midY),
                 from: nil
             )
+            // Диапазон был 244–360: всего 116 точек хода, панель почти не
+            // двигалась даже когда приоритет это позволял.
             self.rootSplitView.setPosition(
-                min(max(point.x, 244), 360),
+                min(max(point.x, 200), 560),
                 ofDividerAt: 0
             )
         }
