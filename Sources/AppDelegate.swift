@@ -1184,6 +1184,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         spacingSlider.numberOfTickMarks = 18
         spacingSlider.allowsTickMarkValuesOnly = false
         spacingSlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        let previewOpacitySlider = NSSlider(
+            value: Double(FPStyle.previewOpacity),
+            minValue: 0.35,
+            maxValue: 1.0,
+            target: nil,
+            action: nil
+        )
+        previewOpacitySlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        previewOpacitySlider.toolTip = "Прозрачность окна просмотра"
         let swipeSensitivitySlider = NSSlider(value: FPPreferences.swipeSensitivity, minValue: 10, maxValue: 100, target: nil, action: nil)
         swipeSensitivitySlider.numberOfTickMarks = 10
         swipeSensitivitySlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
@@ -1233,12 +1242,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         stack.addArrangedSubview(settingsRow(title: "Градиент: конец", control: gradientEndColor))
         stack.addArrangedSubview(settingsRow(title: "Прозрачность фона", control: opacitySlider))
         stack.addArrangedSubview(settingsRow(title: "Прозрачность слева", control: sidebarOpacitySlider))
+        stack.addArrangedSubview(settingsRow(title: "Прозрачность просмотра", control: previewOpacitySlider))
         stack.addArrangedSubview(settingsRow(title: "Расстояние в сетке", control: spacingSlider))
         stack.addArrangedSubview(settingsRow(title: "Чувствительность жеста", control: swipeSensitivitySlider))
         stack.addArrangedSubview(settingsRow(title: "Навигация", control: swipeModeToggle))
         stack.addArrangedSubview(settingsRow(title: "Большие папки", control: groupToggle))
         stack.addArrangedSubview(settingsRow(title: "Оформление", control: gradientToggle))
-        stack.frame = NSRect(x: 0, y: 0, width: 410, height: 535)
+        stack.frame = NSRect(x: 0, y: 0, width: 410, height: 570)
         alert.accessoryView = stack
 
         let response = alert.runModal()
@@ -1255,6 +1265,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             FPStyle.saveColor(gradientEndColor.color, key: "ThemeGradientEnd")
             UserDefaults.standard.set(opacitySlider.doubleValue, forKey: "ThemePaneOpacity")
             UserDefaults.standard.set(sidebarOpacitySlider.doubleValue, forKey: "ThemeSidebarOpacity")
+            UserDefaults.standard.set(previewOpacitySlider.doubleValue, forKey: "PreviewWindowOpacity")
             UserDefaults.standard.set(spacingSlider.doubleValue, forKey: "GridSpacing")
             UserDefaults.standard.set(swipeSensitivitySlider.doubleValue, forKey: "SwipeSensitivity")
             UserDefaults.standard.set(swipeModeToggle.state == .on, forKey: "SwipeNavigationInverted")
@@ -1266,7 +1277,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 "ThemeWindowColor", "ThemePaneColor", "ThemeSidebarColor", "ThemeBarColor",
                 "ThemeFolderColor", "ThemeAccentColor", "ThemeOrangeColor",
                 "ThemeGradientStart", "ThemeGradientEnd", "ThemeGradientEnabled",
-                "ThemePaneOpacity", "ThemeSidebarOpacity", "GridSpacing",
+                "ThemePaneOpacity", "ThemeSidebarOpacity", "PreviewWindowOpacity", "GridSpacing",
                 "SwipeSensitivity", "SwipeNavigationInverted", "GroupLargeFoldersByDate"
             ] {
                 UserDefaults.standard.removeObject(forKey: key)

@@ -58,12 +58,12 @@ final class FPPreviewPane: NSView {
         captionBar.layer?.borderWidth = 1
 
         nameField.translatesAutoresizingMaskIntoConstraints = false
-        nameField.font = FPStyle.bodyFont(ofSize: 12, weight: .semibold)
+        nameField.font = FPStyle.headingFont(ofSize: 11.5, weight: .semibold)
         nameField.lineBreakMode = .byTruncatingMiddle
         nameField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         detailField.translatesAutoresizingMaskIntoConstraints = false
-        detailField.font = .monospacedDigitSystemFont(ofSize: 10.5, weight: .medium)
+        detailField.font = .monospacedDigitSystemFont(ofSize: 10, weight: .semibold)
         detailField.alignment = .right
         detailField.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -75,7 +75,7 @@ final class FPPreviewPane: NSView {
 
         addSubview(focusRing)
         addSubview(previewContainer)
-        addSubview(captionBar)
+        previewContainer.addSubview(captionBar)
         captionBar.addSubview(nameField)
         captionBar.addSubview(detailField)
         addSubview(flagBadge)
@@ -85,17 +85,19 @@ final class FPPreviewPane: NSView {
             previewContainer.topAnchor.constraint(equalTo: topAnchor),
             previewContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
             previewContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
-            previewContainer.bottomAnchor.constraint(equalTo: captionBar.topAnchor, constant: -8),
+            previewContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             focusRing.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: -2),
             focusRing.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: -2),
             focusRing.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: 2),
             focusRing.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: 2),
 
-            captionBar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            captionBar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            captionBar.bottomAnchor.constraint(equalTo: bottomAnchor),
-            captionBar.heightAnchor.constraint(equalToConstant: 30),
+            // Подпись лежит поверх кадра, а не отдельной полосой под ним:
+            // так окно перестаёт делиться на три горизонтальных куска.
+            captionBar.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: 10),
+            captionBar.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -10),
+            captionBar.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: -10),
+            captionBar.heightAnchor.constraint(equalToConstant: 26),
 
             nameField.leadingAnchor.constraint(equalTo: captionBar.leadingAnchor, constant: 10),
             nameField.centerYAnchor.constraint(equalTo: captionBar.centerYAnchor),
@@ -110,19 +112,22 @@ final class FPPreviewPane: NSView {
             // не выходя из просмотра, ради чего просмотрщик и делался.
             flagBadge.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -10),
             flagBadge.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 10),
-            flagBadge.widthAnchor.constraint(equalToConstant: 26),
-            flagBadge.heightAnchor.constraint(equalToConstant: 26)
+            flagBadge.widthAnchor.constraint(equalToConstant: 24),
+            flagBadge.heightAnchor.constraint(equalToConstant: 24)
         ])
     }
 
     /// Цвета берутся из темы, а не задаются жёстко: просмотрщик должен
     /// следовать за палитрой проводника, включая пользовательские темы.
     func applyTheme() {
+        // Рамка и подложка полупрозрачные: сквозь них читается фон окна, и
+        // кадр не выглядит вставленным в глухую коробку.
         previewContainer.layer?.backgroundColor = FPStyle.pane
-            .withAlphaComponent(min(1, FPStyle.pane.alphaComponent + 0.18)).cgColor
-        previewContainer.layer?.borderColor = FPStyle.stroke.cgColor
-        captionBar.layer?.backgroundColor = FPStyle.bar.withAlphaComponent(0.70).cgColor
-        captionBar.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.82).cgColor
+            .withAlphaComponent(FPStyle.pane.alphaComponent * 0.55).cgColor
+        previewContainer.layer?.borderColor = FPStyle.stroke
+            .withAlphaComponent(0.55).cgColor
+        captionBar.layer?.backgroundColor = FPStyle.bar.withAlphaComponent(0.52).cgColor
+        captionBar.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.40).cgColor
         nameField.textColor = FPStyle.text
         detailField.textColor = FPStyle.dimText
         updateFocusRing()
@@ -264,9 +269,7 @@ final class FPPreviewContentView: NSVisualEffectView {
 
         hintBar.translatesAutoresizingMaskIntoConstraints = false
         hintBar.alignment = .center
-        hintBar.font = .monospacedSystemFont(ofSize: 10, weight: .medium)
-        hintBar.stringValue =
-            "← →  листать      F  отметить      ⌫  в корзину      C  сравнение      T  на весь экран      Esc  закрыть"
+        hintBar.attributedStringValue = Self.hintText()
 
         addSubview(stack)
         addSubview(hintBar)
@@ -279,20 +282,61 @@ final class FPPreviewContentView: NSVisualEffectView {
 
             // Верхний отступ крупнее: под прозрачным заголовком окна живут
             // кнопки светофора, кадр не должен под них заезжать.
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: 34),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            stack.bottomAnchor.constraint(equalTo: hintBar.topAnchor, constant: -8),
+            // Верхняя полоса была вдвое выше нужного. Кадру хватает отступа
+            // под кнопки светофора, всё остальное — пустая трата высоты.
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: 30),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            stack.bottomAnchor.constraint(equalTo: hintBar.topAnchor, constant: -6),
 
-            hintBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 14),
-            hintBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
-            hintBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -10),
-            hintBar.heightAnchor.constraint(equalToConstant: 14)
+            hintBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            hintBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            hintBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+            hintBar.heightAnchor.constraint(equalToConstant: 13)
         ])
         applyTheme()
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    /// Строка подсказок: клавиша выделена цветом темы, действие набрано
+    /// капсом приглушённо. Так глаз цепляется за то, что нажимать, а не за
+    /// сплошную серую строку.
+    private static func hintText() -> NSAttributedString {
+        let pairs = [
+            ("← →", "листать"),
+            ("F", "отметить"),
+            ("⌫", "в корзину"),
+            ("C", "сравнение"),
+            ("T", "на весь экран"),
+            ("Esc", "закрыть")
+        ]
+        let line = NSMutableAttributedString()
+        for (index, pair) in pairs.enumerated() {
+            if index > 0 {
+                line.append(NSAttributedString(
+                    string: "     ",
+                    attributes: [.font: NSFont.systemFont(ofSize: 10)]
+                ))
+            }
+            line.append(NSAttributedString(
+                string: pair.0,
+                attributes: [
+                    .font: NSFont.monospacedSystemFont(ofSize: 10.5, weight: .bold),
+                    .foregroundColor: FPStyle.orange
+                ]
+            ))
+            line.append(NSAttributedString(
+                string: "  " + pair.1.uppercased(),
+                attributes: [
+                    .font: FPStyle.headingFont(ofSize: 9.5, weight: .semibold),
+                    .foregroundColor: FPStyle.dimText.withAlphaComponent(0.66),
+                    .kern: 0.7
+                ]
+            ))
+        }
+        return line
+    }
 
     func applyTheme() {
         let opacity = min(max(FPStyle.pane.alphaComponent, 0), 1)
@@ -308,7 +352,7 @@ final class FPPreviewContentView: NSVisualEffectView {
                     FPStyle.window.withAlphaComponent(gradientOpacity)
                 ]
         )
-        hintBar.textColor = FPStyle.dimText.withAlphaComponent(0.72)
+        hintBar.attributedStringValue = Self.hintText()
         panes.forEach { $0.applyTheme() }
     }
 
@@ -387,6 +431,8 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
         window.backgroundColor = FPStyle.gradientEnd
+        window.isOpaque = false
+        window.alphaValue = FPStyle.previewOpacity
         window.minSize = NSSize(width: 520, height: 420)
         // Зелёная кнопка растягивает окно по экрану, а не уводит в системный
         // полноэкранный режим: тот выносит окно на отдельный рабочий стол, и
@@ -416,6 +462,8 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         let start = min(max(request.initialIndex, 0), max(entries.count - 1, 0))
         paneIndices = (0..<paneCount).map { min(start + $0, max(entries.count - 1, 0)) }
         focusedPane = 0
+        window?.alphaValue = FPStyle.previewOpacity
+        contentView.applyTheme()
         rebuildPanes()
         centerOnActiveScreen()
         showWindow(nil)

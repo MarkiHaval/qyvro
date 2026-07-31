@@ -805,6 +805,15 @@ enum FPStyle {
         storedColor("ThemeSidebarColor", fallback: NSColor(calibratedRed: 0.157, green: 0.183, blue: 0.238, alpha: 1))
             .withAlphaComponent(opacity("ThemeSidebarOpacity", fallback: 0.44))
     }
+    /// Прозрачность окна просмотрщика. Настраивается в параметрах темы:
+    /// кому-то нужен плотный фон под тёмную картинку, кому-то — стекло.
+    static var previewOpacity: CGFloat {
+        guard UserDefaults.standard.object(forKey: "PreviewWindowOpacity") != nil else {
+            return 0.88
+        }
+        return min(max(opacity("PreviewWindowOpacity", fallback: 0.88), 0.35), 1)
+    }
+
     static var pane: NSColor {
         storedColor("ThemePaneColor", fallback: NSColor(calibratedRed: 0.122, green: 0.136, blue: 0.157, alpha: 1))
             .withAlphaComponent(opacity("ThemePaneOpacity", fallback: 0.58))
