@@ -1366,6 +1366,15 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     private func handleGridMouseDown(at point: NSPoint, event: NSEvent) {
         guard viewMode == .largeIcons else { return }
         if let index = gridIndex(at: point) {
+            // Звёздочка разбирается здесь: клики в сетке принимает холст, до
+            // самих ячеек они не доходят, поэтому внутри ячейки поймать
+            // нажатие на значок нельзя.
+            if event.clickCount == 1,
+               let cell = gridItemViews.first(where: { $0.itemIndex == index }),
+               cell.flagBadgeContains(point) {
+                toggleFlag(at: index)
+                return
+            }
             selectGridItem(
                 at: index,
                 extending: event.modifierFlags.contains(.command),

@@ -593,10 +593,18 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         fatalError("init(coder:) has not been implemented")
     }
 
+    /// Попал ли клик по звёздочке. Точка ожидается в системе координат
+    /// надвью ячейки — именно в ней приходит нажатие с холста сетки.
+    ///
+    /// Клики в сетке обрабатывает холст `FileGridCanvasView`, а не сами
+    /// ячейки: до `mouseDown` ячейки нажатие не доходит, поэтому разбирать
+    /// попадание по значку приходится снаружи.
+    func flagBadgeContains(_ point: NSPoint) -> Bool {
+        guard !flagBadge.isHidden, let superview else { return false }
+        return flagBadge.frame.contains(convert(point, from: superview))
+    }
+
     override func hitTest(_ point: NSPoint) -> NSView? {
-        // Вся плитка остаётся одной целью для выделения и перетаскивания;
-        // клик по звёздочке разбирается в mouseDown, где координата
-        // переводится в систему ячейки однозначно.
         guard !isHidden, alphaValue > 0, bounds.contains(point) else { return nil }
         return self
     }
@@ -614,17 +622,6 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
 
     override func mouseDown(with event: NSEvent) {
         mouseDownPoint = convert(event.locationInWindow, from: nil)
-        // Звёздочка разбирается здесь, а не через hitTest: там точка приходит
-        // в системе координат надвью, и попасть по значку не получалось.
-        // Координата переводится сразу в систему самого значка и сравнивается
-        // с его bounds — так проверка не зависит ни от одной промежуточной
-        // системы координат в цепочке надвью.
-        if !flagBadge.isHidden,
-           flagBadge.bounds.contains(flagBadge.convert(event.locationInWindow, from: nil)) {
-            onToggleFlag?(itemIndex)
-            mouseDownPoint = nil
-            return
-        }
         let extendsSelection = event.modifierFlags.contains(.command)
         let selectsRange = event.modifierFlags.contains(.shift)
         defersExclusiveSelection = !extendsSelection && !selectsRange &&
