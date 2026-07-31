@@ -901,6 +901,11 @@ enum FPPreferences {
         return min(max(UserDefaults.standard.double(forKey: "SwipeSensitivity"), 10), 100)
     }
 
+    /// Держать ли окно проводника поверх остальных постоянно.
+    static var keepsExplorerOnTop: Bool {
+        UserDefaults.standard.bool(forKey: "AlwaysOnTop")
+    }
+
     /// Схлопывать ли производные файлы в одну стопку.
     static var collapsesFileVersions: Bool {
         UserDefaults.standard.bool(forKey: "CollapseFileVersions")
@@ -1835,7 +1840,12 @@ enum FPDiskUsage {
             return
         }
         let metadataQuery = NSMetadataQuery()
-        metadataQuery.searchScopes = [NSMetadataQueryLocalComputerScope]
+        // Область — домашняя папка, а не весь компьютер. Spotlight отдаёт
+        // один и тот же файл по нескольким путям (обычный и через
+        // /System/Volumes/Data), плюс облачные заглушки с логическим
+        // размером. От этого разбивка насчитывала 1.95 ТБ видео на диске в
+        // 466 ГБ. Домашняя папка — ровно то, что человеку интересно.
+        metadataQuery.searchScopes = [NSMetadataQueryUserHomeScope]
         metadataQuery.predicate = NSCompoundPredicate(orPredicateWithSubpredicates: [
             NSPredicate(format: "kMDItemContentTypeTree == %@", "public.image"),
             NSPredicate(format: "kMDItemContentTypeTree == %@", "public.movie")
@@ -1850,6 +1860,9 @@ enum FPDiskUsage {
             metadataQuery.disableUpdates()
             var images: Int64 = 0
             var videos: Int64 = 0
+            // Один файл может попасть в выдачу дважды под разными путями,
+            // поэтому размеры складываются по уникальным путям.
+            var counted = Set<String>()
             for index in 0..<metadataQuery.resultCount {
                 guard let item = metadataQuery.result(at: index) as? NSMetadataItem,
                       let size = item.value(forAttribute: NSMetadataItemFSSizeKey) as? NSNumber
@@ -1859,12 +1872,28 @@ enum FPDiskUsage {
                 // объёмы больше самого диска.
                 let types = item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String] ?? []
                 guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
-                      FPSpotlightSearch.isMeaningful(URL(fileURLWithPath: path)) else { continue }
+                      FPSpotlightSearch.isMeaningful(URL(fileURLWithPath: path)),
+                      counted.insert(URL(fileURLWithPath: path).standardizedFileURL.path).inserted
+                else { continue }
                 if types.contains("public.movie") {
                     videos += size.int64Value
                 } else if types.contains("public.image") {
                     images += size.int64Value
                 }
+            }
+            // Страховка от завышения: сумма по типам не может превышать
+            // занятое место. Если Spotlight всё же насчитал лишнего, доли
+            // ужимаются пропорционально, а не показывают проценты больше ста.
+            let used = max(cached.total - cached.free, 0)
+            let claimed = images + videos
+            if used > 0, claimed > used {
+                let scale = Double(used) / Double(claimed)
+                images = Int64(Double(images) * scale)
+                videos = Int64(Double(videos) * scale)
+                FPActionLog.problem(
+                    "разбивка диска завышена",
+                    "заявлено \(claimed / 1_048_576) МБ при занятых \(used / 1_048_576) МБ"
+                )
             }
             cached.images = images
             cached.videos = videos

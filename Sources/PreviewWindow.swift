@@ -538,6 +538,12 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         // пряталась и не возвращалась при наведении.
         window.acceptsMouseMovedEvents = true
         window.minSize = NSSize(width: 520, height: 420)
+        // Жёсткий потолок размера. Кадры в 5504 точки шириной раз за разом
+        // утягивали окно за границы экрана; ограничение сверху не даёт этому
+        // случиться, каким бы ни было разрешение картинки.
+        if let visible = NSScreen.main?.visibleFrame.size {
+            window.maxSize = visible
+        }
         // Зелёная кнопка растягивает окно по экрану, а не уводит в системный
         // полноэкранный режим: тот выносит окно на отдельный рабочий стол, и
         // перетаскивать файлы в проводник становится неудобно.
@@ -629,6 +635,9 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         guard let window,
               let screen = NSApp.keyWindow?.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
+        // Потолок пересчитывается под текущий экран: у окна мог остаться
+        // предел от другого монитора.
+        window.maxSize = visible.size
         let size = NSSize(
             width: min(window.frame.width, visible.width * 0.9),
             height: min(window.frame.height, visible.height * 0.9)

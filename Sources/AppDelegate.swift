@@ -101,7 +101,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             window.deminiaturize(nil)
         }
         NSApp.activate(ignoringOtherApps: true)
+        // Окно поднимается над всеми, включая чужие приложения: смысл вызова
+        // в том, чтобы проводник оказался перед глазами сразу, а не встал
+        // где-то в стопке. Уровень возвращается к обычному, как только окно
+        // получило фокус, иначе оно мешало бы поверх всего остального.
+        window.level = .floating
+        window.orderFrontRegardless()
         window.makeKeyAndOrderFront(nil)
+        FPActionLog.action("вызов проводника поверх окон")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak window] in
+            guard let window, !FPPreferences.keepsExplorerOnTop else { return }
+            window.level = .normal
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
