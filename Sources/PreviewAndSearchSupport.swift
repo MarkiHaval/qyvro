@@ -125,6 +125,40 @@ enum FPQuickLookPanelSizing {
 }
 
 enum FPSpotlightSearch {
+    /// Пути, которые не нужны в выдаче.
+    ///
+    /// Поиск по всему компьютеру вытаскивает содержимое кэшей, служебных
+    /// хранилищ приложений и внутренностей бандлов. Человек ищет свой файл, а
+    /// не ресурс внутри программы, поэтому такие пути отбрасываются.
+    private static let noisyFragments = [
+        "/Library/Caches/",
+        "/Library/Containers/",
+        "/Library/Group Containers/",
+        "/Library/Application Support/CrashReporter/",
+        "/Library/Developer/",
+        "/.Trash/",
+        "/node_modules/",
+        "/.git/",
+        "/Library/Mobile Documents/com~apple~CloudDocs/.Trash/"
+    ]
+
+    private static let noisyExtensions: Set<String> = [
+        "app", "framework", "bundle", "plugin", "kext", "xpc",
+        "dylib", "so", "o", "a", "pyc", "class", "log", "cache"
+    ]
+
+    /// Отсеивает служебные файлы из выдачи поиска по всему Маку.
+    static func isMeaningful(_ url: URL) -> Bool {
+        let path = url.path
+        if noisyFragments.contains(where: path.contains) { return false }
+        // Файлы внутри бандлов программ: сам бандл показать можно, его
+        // внутренности — нет.
+        if path.contains(".app/Contents/") { return false }
+        if noisyExtensions.contains(url.pathExtension.lowercased()) { return false }
+        if url.lastPathComponent.hasPrefix(".") { return false }
+        return true
+    }
+
     static func predicate(for text: String) -> NSPredicate {
         let pattern = "*\(text)*"
         return NSCompoundPredicate(orPredicateWithSubpredicates: [

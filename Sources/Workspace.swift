@@ -1756,13 +1756,28 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         guard metadataQuery === query, searchScope == .mac,
               sidebarSearchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines) == text else { return }
         query.disableUpdates()
-        let urls = query.results.prefix(800).compactMap { result -> URL? in
+        // Отбор идёт по всей выдаче, а срез берётся уже после него: иначе
+        // первые восемьсот результатов оказывались забиты кэшами и
+        // внутренностями программ, а нужные файлы в срез не попадали.
+        var urls: [URL] = []
+        var skipped = 0
+        for result in query.results {
             guard let item = result as? NSMetadataItem,
-                  let path = item.value(forAttribute: NSMetadataItemPathKey) as? String else { return nil }
-            return URL(fileURLWithPath: path)
+                  let path = item.value(forAttribute: NSMetadataItemPathKey) as? String else { continue }
+            let url = URL(fileURLWithPath: path)
+            guard FPSpotlightSearch.isMeaningful(url) else {
+                skipped += 1
+                continue
+            }
+            urls.append(url)
+            if urls.count >= 800 { break }
         }
         query.enableUpdates()
-        activePanel?.showSearchResults(Array(urls), query: text)
+        FPActionLog.result(
+            "поиск по Маку: «\(text)»",
+            "показано \(urls.count), отсеяно служебных \(skipped)"
+        )
+        activePanel?.showSearchResults(urls, query: text)
     }
 
     private func stopGlobalSearch() {
