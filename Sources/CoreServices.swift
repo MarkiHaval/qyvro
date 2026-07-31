@@ -32,6 +32,12 @@ struct FPQuickLookRequest {
     /// открытый просмотрщик, но сам его не открывает. Иначе каждое нажатие
     /// на файл распахивало бы окно просмотра.
     var updatesOpenPreviewOnly: Bool = false
+    /// Ровно два выделенных файла открываются сразу шторкой: это и есть
+    /// понятный способ сказать «сравни вот эти два».
+    var opensAsCurtain: Bool = false
+    /// Второй кадр для шторки: выделенные файлы могут стоять в ленте далеко
+    /// друг от друга, поэтому соседним индексом его не угадать.
+    var curtainSecondIndex: Int?
 }
 
 enum FPDirectorySizeCalculator {
@@ -1834,7 +1840,11 @@ enum FPDiskUsage {
             NSPredicate(format: "kMDItemContentTypeTree == %@", "public.image"),
             NSPredicate(format: "kMDItemContentTypeTree == %@", "public.movie")
         ])
-        metadataQuery.valueListAttributes = [NSMetadataItemFSSizeKey]
+        metadataQuery.valueListAttributes = [
+            NSMetadataItemFSSizeKey,
+            NSMetadataItemContentTypeTreeKey,
+            NSMetadataItemPathKey
+        ]
 
         let finish: (Notification) -> Void = { _ in
             metadataQuery.disableUpdates()
@@ -1844,10 +1854,15 @@ enum FPDiskUsage {
                 guard let item = metadataQuery.result(at: index) as? NSMetadataItem,
                       let size = item.value(forAttribute: NSMetadataItemFSSizeKey) as? NSNumber
                 else { continue }
-                let type = item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String]
-                if type?.contains("public.movie") == true {
+                // Дерево типов запрашивается явно: без него атрибут приходил
+                // пустым, всё уходило в одну корзину, и разбивка показывала
+                // объёмы больше самого диска.
+                let types = item.value(forAttribute: NSMetadataItemContentTypeTreeKey) as? [String] ?? []
+                guard let path = item.value(forAttribute: NSMetadataItemPathKey) as? String,
+                      FPSpotlightSearch.isMeaningful(URL(fileURLWithPath: path)) else { continue }
+                if types.contains("public.movie") {
                     videos += size.int64Value
-                } else {
+                } else if types.contains("public.image") {
                     images += size.int64Value
                 }
             }

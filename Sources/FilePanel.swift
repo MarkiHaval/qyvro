@@ -3428,15 +3428,37 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         }) else {
             return
         }
+        // Два выделенных файла — это просьба сравнить их, а не листать: окно
+        // открывается сразу шторкой с обоими кадрами.
+        let picked = selectedItems.filter { !$0.isDirectory }
+        let opensAsCurtain = picked.count == 2
+        var startIndex = initialIndex
+        if opensAsCurtain,
+           let first = entries.firstIndex(where: {
+               $0.url.standardizedFileURL == picked[0].url.standardizedFileURL
+           }) {
+            startIndex = first
+        }
         let request = FPQuickLookRequest(
             entries: entries,
-            initialIndex: initialIndex,
+            initialIndex: startIndex,
             columnCount: viewMode == .largeIcons ? max(1, gridColumnCount) : 1,
             onIndexChanged: { [weak self] url in
                 self?.select(url: url)
-            }
+            },
+            opensAsCurtain: opensAsCurtain,
+            curtainSecondIndex: opensAsCurtain
+                ? entries.firstIndex(where: {
+                    $0.url.standardizedFileURL == picked[1].url.standardizedFileURL
+                })
+                : nil
         )
-        FPActionLog.action("превью открыто", selected.url.lastPathComponent)
+        FPActionLog.action(
+            "превью открыто",
+            selectedItems.count == 2
+                ? "два файла — шторка"
+                : selected.url.lastPathComponent
+        )
         onQuickLook?(request)
     }
 

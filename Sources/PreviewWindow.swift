@@ -1,3 +1,4 @@
+import AVKit
 import Cocoa
 import Quartz
 
@@ -13,6 +14,13 @@ import Quartz
 final class FPPreviewPane: NSView {
     private let previewContainer = NSView()
     private var previewView: QLPreviewView?
+    /// Видео показывается родным плеером, а не через Quick Look.
+    ///
+    /// У Quick Look внутри чужого окна панель воспроизведения пряталась по
+    /// таймауту и не возвращалась при наведении: он не получал событий о
+    /// движении мыши, а повлиять на это снаружи нельзя. Свой плеер даёт
+    /// плавающие элементы управления, которыми управляем мы.
+    private var playerView: AVPlayerView?
     private static let cacheLimit = 4
     private var cache: [(url: URL, view: QLPreviewView)] = []
     private var previousURL: URL?
@@ -124,11 +132,38 @@ final class FPPreviewPane: NSView {
         }
         previewView = nil
         previousURL = url
+        playerView?.player?.pause()
+        playerView?.removeFromSuperview()
+        playerView = nil
 
         guard let url else {
             nameText = ""
             detailText = ""
             flagBadge.isHidden = true
+            return
+        }
+
+        if FPMediaInfoCache.movieExtensions.contains(url.pathExtension.lowercased()) {
+            // Видео идёт мимо Quick Look: свой плеер сам рисует плавающие
+            // элементы управления и не зависит от того, доходят ли до него
+            // события мыши через чужое окно.
+            let player = AVPlayerView(frame: previewContainer.bounds)
+            player.translatesAutoresizingMaskIntoConstraints = false
+            player.controlsStyle = .floating
+            player.showsFullScreenToggleButton = false
+            player.videoGravity = .resizeAspect
+            player.player = AVPlayer(url: url)
+            previewContainer.addSubview(player)
+            NSLayoutConstraint.activate([
+                player.topAnchor.constraint(equalTo: previewContainer.topAnchor),
+                player.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
+                player.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
+                player.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor)
+            ])
+            playerView = player
+            nameText = url.lastPathComponent
+            refreshFlag()
+            refreshDetail(for: url)
             return
         }
 
@@ -188,6 +223,9 @@ final class FPPreviewPane: NSView {
     }
 
     func teardown() {
+        playerView?.player?.pause()
+        playerView?.removeFromSuperview()
+        playerView = nil
         previewView?.close()
         previewView?.removeFromSuperview()
         previewView = nil
@@ -410,6 +448,10 @@ final class FPPreviewContentView: NSView {
         }
     }
 
+    func setPanesHidden(_ hidden: Bool) {
+        stack.isHidden = hidden
+    }
+
     func setPaneCount(_ count: Int, configure: (FPPreviewPane) -> Void) {
         let target = max(1, min(3, count))
         while panes.count > target {
@@ -451,6 +493,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     private var keyMonitor: Any?
     private let curtain = FPCurtainCompareView(frame: .zero)
     private var isCurtainMode = false
+    private var curtainLoadedURLs: [URL] = []
     /// Рамка окна до растягивания на экран, чтобы вернуть её обратно.
     private var framedBeforeMaximize: NSRect?
 
@@ -518,10 +561,17 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         onIndexChanged = request.onIndexChanged
         // Каждый показ начинается с одной панели: режим сравнения не должен
         // переживать закрытие окна, иначе следующий пробел открывает пачку.
-        paneCount = 1
+        paneCount = request.opensAsCurtain ? 2 : 1
+        isCurtainMode = request.opensAsCurtain
+        curtainLoadedURLs = []
         framedBeforeMaximize = nil
+        if isCurtainMode { installCurtain() } else { curtain.removeFromSuperview() }
         let start = min(max(request.initialIndex, 0), max(entries.count - 1, 0))
-        paneIndices = (0..<paneCount).map { min(start + $0, max(entries.count - 1, 0)) }
+        if isCurtainMode, let second = request.curtainSecondIndex {
+            paneIndices = [start, min(max(second, 0), max(entries.count - 1, 0))]
+        } else {
+            paneIndices = (0..<paneCount).map { min(start + $0, max(entries.count - 1, 0)) }
+        }
         focusedPane = 0
         contentView.applyTheme()
         rebuildPanes()
@@ -630,6 +680,9 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         updateTitle()
         refreshCaption()
         curtain.isHidden = !isCurtainMode
+        // Панели под шторкой не нужны: они держали бы вторые копии тех же
+        // кадров и рисовались впустую.
+        contentView.setPanesHidden(isCurtainMode)
         updateCurtainImages()
         if let url = focusedURL { onIndexChanged?(url) }
     }
@@ -744,6 +797,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     /// доводится до двух: иначе непонятно, какие варианты накладывать.
     private func toggleCurtain() {
         isCurtainMode.toggle()
+        curtainLoadedURLs = []
         FPActionLog.action("шторка → \(isCurtainMode ? "включена" : "выключена")")
         if isCurtainMode {
             if paneCount < 2 {
@@ -771,27 +825,41 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         ])
     }
 
-    /// Кадры для шторки берутся миниатюрами: полноразмерный QLPreviewView
-    /// наложить друг на друга нельзя, а для сравнения деталей хватает
-    /// изображения в размер экрана.
+    /// Готовит кадры для шторки.
+    ///
+    /// Изображения уменьшаются при чтении: наложить два кадра по 5504×3072
+    /// в полном разрешении означает держать в памяти под 150 МБ и тормозить
+    /// на каждом движении границы. Для сравнения деталей хватает размера
+    /// вдвое больше экрана.
     private func updateCurtainImages() {
         guard isCurtainMode else { return }
         let urls = paneIndices.prefix(2).compactMap { index -> URL? in
             entries.indices.contains(index) ? entries[index].url : nil
         }
-        guard urls.count == 2 else { return }
-        let side = max(curtain.bounds.width, 1200)
+        guard urls.count == 2, urls != curtainLoadedURLs else { return }
+        curtainLoadedURLs = urls
+        let limit = Int(max(curtain.bounds.width, 900) * 2)
         DispatchQueue.global(qos: .userInitiated).async {
-            let images = urls.map { url -> NSImage? in
-                NSImage(contentsOf: url)
-                    ?? NSWorkspace.shared.icon(forFile: url.path)
-            }
+            let images = urls.map { Self.downscaled(url: $0, maxSide: limit) }
             DispatchQueue.main.async { [weak self] in
-                guard let self, self.isCurtainMode else { return }
-                _ = side
+                guard let self, self.isCurtainMode, self.curtainLoadedURLs == urls else { return }
                 self.curtain.setImages(left: images.first ?? nil, right: images.last ?? nil)
             }
         }
+    }
+
+    /// Читает картинку сразу уменьшенной — полный размер для шторки не нужен.
+    private static func downscaled(url: URL, maxSide: Int) -> NSImage? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxSide
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return nil
+        }
+        return NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
     }
 
     private func cyclePaneCount() {
