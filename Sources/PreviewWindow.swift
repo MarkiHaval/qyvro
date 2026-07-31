@@ -316,7 +316,12 @@ final class FPPreviewContentView: NSVisualEffectView {
 final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     private let contentView = FPPreviewContentView(frame: NSRect(x: 0, y: 0, width: 1_100, height: 760))
     private var entries: [FPQuickLookGalleryEntry] = []
-    private var index = 0
+    /// Позиция каждой панели по отдельности.
+    ///
+    /// В сравнении панели листаются независимо: одну придерживаешь как
+    /// эталон, вторую прогоняешь по вариантам. Общий индекс двигал обе
+    /// сразу, и сравнивать было не с чем.
+    private var paneIndices: [Int] = [0]
     private var paneCount = 1
     private var focusedPane = 0
     private var onIndexChanged: ((URL) -> Void)?
@@ -353,7 +358,8 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     func present(_ request: FPQuickLookRequest) {
         entries = request.entries
         onIndexChanged = request.onIndexChanged
-        index = min(max(request.initialIndex, 0), max(entries.count - 1, 0))
+        let start = min(max(request.initialIndex, 0), max(entries.count - 1, 0))
+        paneIndices = (0..<paneCount).map { min(start + $0, max(entries.count - 1, 0)) }
         focusedPane = 0
         rebuildPanes()
         centerOnActiveScreen()
@@ -424,37 +430,49 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
             close()
             return
         }
-        index = min(max(index, 0), entries.count - 1)
+        normalizePaneIndices()
         for (offset, pane) in contentView.panes.enumerated() {
-            let position = index + offset
+            let position = paneIndices.indices.contains(offset) ? paneIndices[offset] : 0
             pane.show(url: entries.indices.contains(position) ? entries[position].url : nil)
         }
-        focusedPane = min(focusedPane, paneCount - 1)
         updateFocusRings()
         updateTitle()
-        onIndexChanged?(entries[index].url)
+        if let url = focusedURL { onIndexChanged?(url) }
+    }
+
+    private func normalizePaneIndices() {
+        while paneIndices.count < paneCount {
+            paneIndices.append(min((paneIndices.last ?? -1) + 1, entries.count - 1))
+        }
+        if paneIndices.count > paneCount {
+            paneIndices.removeLast(paneIndices.count - paneCount)
+        }
+        paneIndices = paneIndices.map { min(max($0, 0), max(entries.count - 1, 0)) }
+        focusedPane = min(max(focusedPane, 0), paneCount - 1)
     }
 
     private func updateTitle() {
-        let position = "\(index + 1) из \(entries.count)"
+        let position = "\(focusedIndex + 1) из \(entries.count)"
         window?.title = paneCount > 1
             ? "\(position)  ·  сравнение \(paneCount)"
             : position
     }
 
-    private var focusedURL: URL? {
-        let position = index + focusedPane
-        return entries.indices.contains(position) ? entries[position].url : nil
+    private var focusedIndex: Int {
+        paneIndices.indices.contains(focusedPane) ? paneIndices[focusedPane] : 0
     }
 
+    private var focusedURL: URL? {
+        entries.indices.contains(focusedIndex) ? entries[focusedIndex].url : nil
+    }
+
+    /// Стрелки двигают только выделенную панель. Соседние остаются на своих
+    /// кадрах, иначе сравнение теряет смысл.
     private func move(by delta: Int) {
-        guard !entries.isEmpty else { return }
-        // В режиме сравнения шаг равен числу панелей: пачка вариантов
-        // пролистывается группами, а не по одному со сдвигом.
-        let step = delta * paneCount
-        let next = index + step
+        guard !entries.isEmpty, paneIndices.indices.contains(focusedPane) else { return }
+        let next = paneIndices[focusedPane] + delta
         guard next >= 0, next < entries.count else { return }
-        index = next
+        paneIndices[focusedPane] = next
         refreshPanes()
     }
 
@@ -485,20 +503,29 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
                 [.init(original: url, trashURL: trashURL)]
             )
         }
-        let removed = index + focusedPane
+        let removed = focusedIndex
         entries.remove(at: removed)
         onNeedsRefresh?()
         guard !entries.isEmpty else {
             close()
             return
         }
-        if index >= entries.count { index = max(0, entries.count - paneCount) }
+        // Позиции соседних панелей сдвигаются вместе с удалённым элементом,
+        // иначе они молча перескочили бы на другие кадры.
+        paneIndices = paneIndices.map { $0 > removed ? $0 - 1 : $0 }
         refreshPanes()
     }
 
     private func cyclePaneCount() {
+        let previous = paneCount
         paneCount = paneCount % 3 + 1
-        focusedPane = 0
+        if paneCount > previous {
+            // Новая панель встаёт на следующий кадр после последней, чтобы
+            // сравнение сразу показывало разные файлы.
+            let next = (paneIndices.max() ?? 0) + 1
+            paneIndices.append(min(next, max(entries.count - 1, 0)))
+        }
+        focusedPane = min(focusedPane, paneCount - 1)
         rebuildPanes()
         refreshPanes()
     }

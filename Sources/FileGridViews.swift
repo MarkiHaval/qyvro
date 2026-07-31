@@ -594,13 +594,10 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
+        // Вся плитка остаётся одной целью для выделения и перетаскивания;
+        // клик по звёздочке разбирается в mouseDown, где координата
+        // переводится в систему ячейки однозначно.
         guard !isHidden, alphaValue > 0, bounds.contains(point) else { return nil }
-        // Вся плитка — одна цель для выделения и перетаскивания, поэтому
-        // клики забираются на себя. Звёздочка единственное исключение: без
-        // него отметку мышью поставить нельзя, клик уходил в выделение.
-        if !flagBadge.isHidden, flagBadge.frame.contains(point) {
-            return flagBadge
-        }
         return self
     }
 
@@ -617,6 +614,17 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
 
     override func mouseDown(with event: NSEvent) {
         mouseDownPoint = convert(event.locationInWindow, from: nil)
+        // Звёздочка обрабатывается здесь, а не через hitTest: в hitTest точка
+        // приходит в системе координат надвью, и попасть по значку надёжно не
+        // получалось. Здесь координата переводится в систему самой ячейки
+        // явно, поэтому попадание однозначно.
+        if !flagBadge.isHidden,
+           let point = mouseDownPoint,
+           flagBadge.frame.contains(point) {
+            onToggleFlag?(itemIndex)
+            mouseDownPoint = nil
+            return
+        }
         let extendsSelection = event.modifierFlags.contains(.command)
         let selectsRange = event.modifierFlags.contains(.shift)
         defersExclusiveSelection = !extendsSelection && !selectsRange &&
