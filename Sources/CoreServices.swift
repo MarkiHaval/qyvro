@@ -1427,29 +1427,91 @@ final class FPTagStore {
     }
 }
 
-/// Временная запись диагностики в файл. Используется, когда поведение нельзя
-/// воспроизвести автоматизацией: пользователь повторяет действие руками, а лог
-/// остаётся на диске. Удаляется вместе с отлаженным участком.
-enum FPDiagnostics {
-    private static let path = "/tmp/qyvro_diag.log"
-    private static let queue = DispatchQueue(label: "qyvro.diagnostics")
-    static var isEnabled = ProcessInfo.processInfo.environment["QYVRO_DIAG"] != nil
-        || FileManager.default.fileExists(atPath: "/tmp/qyvro_diag_on")
+/// Журнал действий пользователя.
+///
+/// Пишет в `~/Library/Logs/Qyvro/actions.log` всё, что человек делает в
+/// приложении: нажатия, переходы, смену фильтров, работу с превью. Нужен,
+/// чтобы разбирать баги по факту, а не по пересказу: в отчёте видно точную
+/// последовательность действий, время между ними и что приложение ответило.
+///
+/// Пишется всегда, объём ограничен: при превышении предела старая половина
+/// отбрасывается, поэтому файл не растёт бесконечно.
+enum FPActionLog {
+    private static let queue = DispatchQueue(label: "qyvro.actionlog", qos: .utility)
+    private static let byteLimit = 512 * 1024
+    private static var launchStamp = Date()
 
-    static func log(_ message: String) {
-        guard isEnabled else { return }
+    static let directoryURL: URL = {
+        let base = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library")
+        return base.appendingPathComponent("Logs/Qyvro", isDirectory: true)
+    }()
+
+    static var fileURL: URL { directoryURL.appendingPathComponent("actions.log") }
+
+    private static let formatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss.SSS"
+        return formatter
+    }()
+
+    /// Действие человека: нажатие, выбор пункта меню, жест.
+    static func action(_ what: String, _ detail: String = "") {
+        write("ДЕЙСТВИЕ", what, detail)
+    }
+
+    /// Ответ приложения на действие: что изменилось, сколько заняло.
+    static func result(_ what: String, _ detail: String = "") {
+        write("РЕЗУЛЬТАТ", what, detail)
+    }
+
+    /// Сбой или неожиданное состояние.
+    static func problem(_ what: String, _ detail: String = "") {
+        write("ПРОБЛЕМА", what, detail)
+    }
+
+    static func startSession(version: String) {
+        launchStamp = Date()
         queue.async {
-            let stamp = ISO8601DateFormatter().string(from: Date())
-            let line = "\(stamp)  \(message)\n"
+            try? FileManager.default.createDirectory(
+                at: directoryURL,
+                withIntermediateDirectories: true
+            )
+        }
+        write("ЗАПУСК", "Qyvro \(version)", ProcessInfo.processInfo.operatingSystemVersionString)
+    }
+
+    private static func write(_ kind: String, _ what: String, _ detail: String) {
+        let now = Date()
+        queue.async {
+            let since = String(format: "%.1f", now.timeIntervalSince(launchStamp))
+            var line = "\(formatter.string(from: now))  +\(since)s  \(kind)  \(what)"
+            if !detail.isEmpty { line += "  —  \(detail)" }
+            line += "\n"
             guard let data = line.data(using: .utf8) else { return }
-            if let handle = FileHandle(forWritingAtPath: path) {
+            let url = fileURL
+            let manager = FileManager.default
+            if !manager.fileExists(atPath: url.path) {
+                try? manager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+                try? data.write(to: url)
+                return
+            }
+            if let handle = try? FileHandle(forWritingTo: url) {
                 handle.seekToEndOfFile()
                 handle.write(data)
                 try? handle.close()
-            } else {
-                try? data.write(to: URL(fileURLWithPath: path))
             }
+            trimIfNeeded(url)
         }
+    }
+
+    private static func trimIfNeeded(_ url: URL) {
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > byteLimit,
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let kept = lines.suffix(lines.count / 2).joined(separator: "\n")
+        try? kept.write(to: url, atomically: true, encoding: .utf8)
     }
 }
 

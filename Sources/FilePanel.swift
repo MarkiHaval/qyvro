@@ -762,6 +762,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     @objc private func applyGridFilter(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
               let option = FPGridFilter(rawValue: raw) else { return }
+        FPActionLog.action("фильтр → \(option.title)")
         gridFilter = option
         syncFilterControl()
         loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
@@ -1374,6 +1375,10 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let next = min(max(current - delta, 0), section.horizontalExtent)
         guard abs(next - current) > 0.01 else { return false }
         collapsedSectionOffsets[section.id] = next
+        FPActionLog.action(
+            "ряд «\(section.title ?? section.id)» листается",
+            "сдвиг \(Int(next)) из \(Int(section.horizontalExtent))"
+        )
         rebuildGridViews()
         return true
     }

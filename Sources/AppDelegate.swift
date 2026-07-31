@@ -56,6 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        FPActionLog.startSession(
+            version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+                as? String ?? "?"
+        )
         UserDefaults.standard.set(1500, forKey: "NSInitialToolTipDelay")
         FPPreferences.migrateGestureSettingsForVersionOne()
         FPStyle.migrateCyberEditorialForVersionTwo()
@@ -1002,6 +1006,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let copyPathItem = fileMenu.addItem(withTitle: "Скопировать путь", action: #selector(copyPaths(_:)), keyEquivalent: "c")
         copyPathItem.keyEquivalentModifierMask = [.command, .shift]
         fileMenu.addItem(withTitle: "Показать в Finder", action: #selector(revealSelection(_:)), keyEquivalent: "r")
+        fileMenu.addItem(.separator())
+        let logItem = fileMenu.addItem(
+            withTitle: "Журнал действий…",
+            action: #selector(revealActionLog(_:)),
+            keyEquivalent: ""
+        )
+        logItem.target = self
+        logItem.toolTip = "Открыть файл журнала: в нём видно, что и когда нажималось"
         fileMenu.addItem(withTitle: "Переместить в корзину", action: #selector(trashSelection(_:)), keyEquivalent: "\u{8}")
         fileItem.submenu = fileMenu
         mainMenu.addItem(fileItem)
@@ -1359,6 +1371,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     @objc private func togglePreview(_ sender: Any?) { activeWorkspace?.togglePreview(sender) }
     @objc private func toggleViewMode(_ sender: Any?) { activeWorkspace?.toggleViewMode(sender) }
     @objc private func trashSelection(_ sender: Any?) { activeWorkspace?.trashSelection(sender) }
+    /// Открывает журнал действий. Файл нужен, чтобы разбирать баги по
+    /// фактической последовательности нажатий, а не по пересказу.
+    @objc private func revealActionLog(_ sender: Any?) {
+        let url = FPActionLog.fileURL
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            NSWorkspace.shared.activateFileViewerSelecting([FPActionLog.directoryURL])
+            return
+        }
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+    }
+
     @objc private func revealSelection(_ sender: Any?) { activeWorkspace?.revealSelection(sender) }
     @objc private func copyPaths(_ sender: Any?) { activeWorkspace?.copyPaths(sender) }
     @objc private func copyFiles(_ sender: Any?) { activeWorkspace?.copyFiles(sender) }

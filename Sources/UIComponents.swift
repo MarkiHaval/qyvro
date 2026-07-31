@@ -572,6 +572,16 @@ class AnimatedSidebarButton: NSButton {
         }
     }
 
+    /// Прерывает анимацию подписи.
+    ///
+    /// Анимация запоминает текст в момент нажатия и в конце возвращает его.
+    /// Если действие кнопки меняет подпись (как переключатель области поиска),
+    /// анимация затирала новое значение старым, и надпись менялась только
+    /// через несколько нажатий.
+    func cancelTitleAnimation() {
+        textAnimationID = UUID()
+    }
+
     private func animateActivation() {
         let animationID = UUID()
         textAnimationID = animationID

@@ -13,6 +13,9 @@ import Quartz
 final class FPPreviewPane: NSView {
     private let previewContainer = NSView()
     private var previewView: QLPreviewView?
+    private static let cacheLimit = 4
+    private var cache: [(url: URL, view: QLPreviewView)] = []
+    private var previousURL: URL?
     private let captionBar = NSVisualEffectView()
     private let nameField = NSTextField(labelWithString: "")
     private let detailField = NSTextField(labelWithString: "")
@@ -144,12 +147,20 @@ final class FPPreviewPane: NSView {
             return
         }
         self.url = url
-        // QLPreviewView пересоздаётся под каждый файл: повторное присвоение
-        // previewItem у живого экземпляра иногда оставляет на экране кадр от
-        // предыдущего файла, пока новый декодируется.
-        previewView?.close()
-        previewView?.removeFromSuperview()
+        // Готовые кадры не выбрасываются, а откладываются: при листании
+        // вперёд-назад по одним и тем же файлам картинка декодировалась
+        // заново каждый раз. Кэш небольшой — соседние кадры и есть то, между
+        // чем человек ходит чаще всего.
+        if let previewView, let previous = previousURL {
+            previewView.removeFromSuperview()
+            cache.removeAll { $0.url == previous }
+            cache.append((previous, previewView))
+            while cache.count > Self.cacheLimit {
+                cache.removeFirst().view.close()
+            }
+        }
         previewView = nil
+        previousURL = url
 
         guard let url else {
             nameField.stringValue = ""
@@ -158,7 +169,9 @@ final class FPPreviewPane: NSView {
             return
         }
 
-        let view = QLPreviewView(frame: previewContainer.bounds, style: .normal)
+        let cached = cache.first(where: { $0.url == url })?.view
+        if cached != nil { cache.removeAll { $0.url == url } }
+        let view = cached ?? QLPreviewView(frame: previewContainer.bounds, style: .normal)
         view?.translatesAutoresizingMaskIntoConstraints = false
         view?.autostarts = false
         view?.shouldCloseWithWindow = false
@@ -170,7 +183,7 @@ final class FPPreviewPane: NSView {
                 view.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
                 view.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor)
             ])
-            view.previewItem = url as NSURL
+            if cached == nil { view.previewItem = url as NSURL }
             previewView = view
         }
 
@@ -215,6 +228,9 @@ final class FPPreviewPane: NSView {
         previewView?.close()
         previewView?.removeFromSuperview()
         previewView = nil
+        for entry in cache { entry.view.close() }
+        cache.removeAll()
+        previousURL = nil
         url = nil
     }
 }

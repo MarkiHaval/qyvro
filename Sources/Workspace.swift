@@ -1260,22 +1260,22 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
             switch event.type {
             case .leftMouseDown:
                 let edge = sidebar.frame.maxX
-                FPDiagnostics.log(
-                    "нажатие x=\(Int(point.x)) край=\(Int(edge)) "
+                FPActionLog.action(
+                    "край панели: нажатие x=\(Int(point.x)) край=\(Int(edge)) "
                         + "разница=\(Int(abs(point.x - edge))) "
                         + "ширина=\(Int(sidebar.frame.width))"
                 )
                 guard abs(point.x - edge) <= 10 else { return event }
                 self.isDraggingSidebarEdge = true
-                FPDiagnostics.log("захват края начат")
+                FPActionLog.action("край панели: захват начат")
                 return nil
             case .leftMouseDragged:
                 guard self.isDraggingSidebarEdge else { return event }
                 let target = min(max(point.x, 200), 560)
                 self.rootSplitView.setPosition(target, ofDividerAt: 0)
                 self.rootSplitView.layoutSubtreeIfNeeded()
-                FPDiagnostics.log(
-                    "тяну к \(Int(target)) стало=\(Int(sidebar.frame.width))"
+                FPActionLog.result(
+                    "край панели: тяну к \(Int(target)) стало=\(Int(sidebar.frame.width))"
                 )
                 return nil
             default:
@@ -1650,6 +1650,8 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
     private func applySearchScopeAppearance() {
         let isMac = searchScope == .mac
         let title = isMac ? "Мак" : "Папка"
+        // Иначе анимация нажатия вернёт подпись, запомненную до переключения.
+        sidebarSearchScopeButton.cancelTitleAnimation()
         sidebarSearchScopeButton.title = title
         sidebarSearchScopeButton.contentTintColor = isMac ? FPStyle.orange : FPStyle.text
         let paragraph = NSMutableParagraphStyle()
@@ -1680,6 +1682,10 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         // переход в текущую папку, а тот синхронизирует поле из панели, где
         // запрос уже пустой — набранный текст затирался.
         let pendingQuery = sidebarSearchField.stringValue
+        FPActionLog.action(
+            "поиск: область → \(isMac ? "Мак" : "Папка")",
+            "запрос «\(pendingQuery)»"
+        )
         applySearchScopeAppearance()
         if !isMac {
             stopGlobalSearch()
