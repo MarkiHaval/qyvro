@@ -1,43 +1,42 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
-  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleDevelopmentRegion</key>
-  <string>en</string>
-  <key>CFBundleExecutable</key>
-  <string>Qyvro</string>
-  <key>CFBundleIdentifier</key>
-  <string>com.qyvro.files</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>Qyvro</string>
-  <key>CFBundleDisplayName</key>
-  <string>Qyvro</string>
-  <key>CFBundlePackageType</key>
-  <string>APPL</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Qyvro</string>
+	<key>CFBundleExecutable</key>
+	<string>Qyvro</string>
+	<key>CFBundleIconFile</key>
+	<string>Qyvro.icns</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.qyvro.files</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Qyvro</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.3</string>
+	<string>1.4</string>
 	<key>CFBundleVersion</key>
-	<string>3</string>
-  <key>CFBundleIconFile</key>
-  <string>Qyvro.icns</string>
-  <key>LSMinimumSystemVersion</key>
-  <string>13.0</string>
-  <key>NSHighResolutionCapable</key>
-  <true/>
-  <key>NSHumanReadableCopyright</key>
-  <string>Local personal utility built with Codex.</string>
-  <key>NSDesktopFolderUsageDescription</key>
-  <string>Qyvro нужен доступ к Рабочему столу, чтобы показывать и открывать файлы.</string>
-  <key>NSDocumentsFolderUsageDescription</key>
-  <string>Qyvro нужен доступ к Документам, чтобы показывать и открывать файлы.</string>
-  <key>NSDownloadsFolderUsageDescription</key>
-  <string>Qyvro нужен доступ к Загрузкам, чтобы показывать и открывать файлы.</string>
-  <key>NSNetworkVolumesUsageDescription</key>
-  <string>Qyvro нужен доступ к сетевым дискам, когда ты их открываешь.</string>
-  <key>NSRemovableVolumesUsageDescription</key>
-  <string>Qyvro нужен доступ к внешним дискам, когда ты их открываешь.</string>
+	<string>1.4</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.0</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Qyvro нужен доступ к Рабочему столу, чтобы показывать и открывать файлы.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Qyvro нужен доступ к Документам, чтобы показывать и открывать файлы.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Qyvro нужен доступ к Загрузкам, чтобы показывать и открывать файлы.</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>Local personal utility built with Codex.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Qyvro нужен доступ к сетевым дискам, когда ты их открываешь.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Qyvro нужен доступ к внешним дискам, когда ты их открываешь.</string>
 </dict>
 </plist>
