@@ -226,6 +226,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// сравнения вариантов.
     private func showQuickLook(_ request: FPQuickLookRequest) {
         guard !request.entries.isEmpty else { return }
+        // Открытый просмотрщик не пересоздаётся: выбранный в проводнике файл
+        // встаёт в выделенную панель, соседние остаются на своих кадрах.
+        if let existing = previewWindowController, existing.isPresenting {
+            existing.replaceFocusedPane(with: request)
+            return
+        }
         let controller = previewWindowController ?? {
             let created = FPPreviewWindowController()
             created.onNeedsRefresh = { [weak self] in

@@ -951,7 +951,8 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
 
     private let rootSplitView = NSSplitView()
     private let splitView = NSSplitView()
-    private let sidebarResizeHandle = FPSidebarResizeHandle()
+    private var sidebarResizeMonitor: Any?
+    private var isDraggingSidebarEdge = false
     private let previewSidebar = FilePreviewSidebar()
     private let backgroundGradientView = FPBackgroundGradientView()
     private let editorialBackdropView = FPEditorialBackdropView()
@@ -1060,7 +1061,10 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
             NSLayoutConstraint.Priority(260),
             forSubviewAt: 0
         )
-        rootSplitView.setHoldingPriority(.required, forSubviewAt: 2)
+        rootSplitView.setHoldingPriority(
+            NSLayoutConstraint.Priority(260),
+            forSubviewAt: 2
+        )
         previewSidebar.setContentHuggingPriority(.defaultLow, for: .horizontal)
         previewSidebar.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         rootSplitView.autosaveName = "FilePilotRootSplit"
@@ -1069,21 +1073,14 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         }
         previewSidebar.isHidden = !UserDefaults.standard.bool(forKey: "PreviewSidebarVisible")
 
-        sidebarResizeHandle.translatesAutoresizingMaskIntoConstraints = false
-        sidebarResizeHandle.onDrag = { [weak self] windowX in
-            guard let self else { return }
-            let point = self.rootSplitView.convert(
-                NSPoint(x: windowX, y: self.rootSplitView.bounds.midY),
-                from: nil
-            )
-            // Диапазон был 244–360: всего 116 точек хода, панель почти не
-            // двигалась даже когда приоритет это позволял.
-            self.rootSplitView.setPosition(
-                min(max(point.x, 200), 560),
-                ofDividerAt: 0
-            )
-        }
-        addSubview(sidebarResizeHandle, positioned: .above, relativeTo: rootSplitView)
+        // Самодельная накладка-ручка убрана: у сплит-вью уже есть родная зона
+        // перетаскивания шириной 12 точек, которую задаёт делегат в
+        // `additionalEffectiveRectOfDividerAt`. Накладка лежала поверх неё и
+        // перехватывала нажатия, а сама их не получала — её `hitTest`
+        // сравнивал точку в системе координат надвью со своими границами.
+        // Ширина меняется через монитор событий: он не зависит ни от порядка
+        // наложения видов, ни от систем координат в цепочке надвью.
+        installSidebarResizeMonitor()
 
         NSLayoutConstraint.activate([
             backgroundGradientView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -1097,11 +1094,7 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
             rootSplitView.leadingAnchor.constraint(equalTo: leadingAnchor),
             rootSplitView.trailingAnchor.constraint(equalTo: trailingAnchor),
             rootSplitView.topAnchor.constraint(equalTo: topAnchor),
-            rootSplitView.bottomAnchor.constraint(equalTo: bottomAnchor),
-            sidebarResizeHandle.centerXAnchor.constraint(equalTo: sidebar.trailingAnchor),
-            sidebarResizeHandle.topAnchor.constraint(equalTo: topAnchor),
-            sidebarResizeHandle.bottomAnchor.constraint(equalTo: bottomAnchor),
-            sidebarResizeHandle.widthAnchor.constraint(equalToConstant: 12)
+            rootSplitView.bottomAnchor.constraint(equalTo: bottomAnchor)
         ])
 
         if let restoredPanes, !restoredPanes.isEmpty {
@@ -1245,6 +1238,45 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
 
     func splitViewDidResizeSubviews(_ notification: Notification) {
         onSessionChanged?()
+    }
+
+    /// Перетаскивание края боковой панели.
+    ///
+    /// Ловится монитором, а не видом-ручкой: у прежней накладки `hitTest`
+    /// сравнивал точку в системе координат надвью со своими границами,
+    /// поэтому нажатие до неё не доходило и панель не тянулась.
+    private func installSidebarResizeMonitor() {
+        guard sidebarResizeMonitor == nil else { return }
+        sidebarResizeMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
+        ) { [weak self] event in
+            guard let self,
+                  let window = self.window,
+                  event.window === window,
+                  let sidebar = self.rootSplitView.arrangedSubviews.first else {
+                return event
+            }
+            let point = self.rootSplitView.convert(event.locationInWindow, from: nil)
+            switch event.type {
+            case .leftMouseDown:
+                guard abs(point.x - sidebar.frame.maxX) <= 8,
+                      point.y >= self.rootSplitView.bounds.minY,
+                      point.y <= self.rootSplitView.bounds.maxY else { return event }
+                self.isDraggingSidebarEdge = true
+                return nil
+            case .leftMouseDragged:
+                guard self.isDraggingSidebarEdge else { return event }
+                self.rootSplitView.setPosition(
+                    min(max(point.x, 200), 560),
+                    ofDividerAt: 0
+                )
+                return nil
+            default:
+                guard self.isDraggingSidebarEdge else { return event }
+                self.isDraggingSidebarEdge = false
+                return nil
+            }
+        }
     }
 
     func splitView(
@@ -1799,7 +1831,9 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         button.setContentHuggingPriority(.defaultLow, for: .horizontal)
         button.bezelStyle = .inline
         button.isBordered = false
-        button.contentTintColor = FPStyle.dimText
+        // Значок акцентным, подпись приглушённой: раньше и то и другое было
+        // почти белым, панель выглядела плоско и слепила.
+        button.contentTintColor = FPStyle.accent
         let font = FPStyle.bodyFont(
             ofSize: FPStyle.isCyberEditorial ? 12.5 : 13,
             weight: FPStyle.isCyberEditorial ? .semibold : .medium
@@ -1812,8 +1846,12 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
             string: title,
             attributes: [
                 .font: font,
-                .foregroundColor: FPStyle.text,
-                .paragraphStyle: paragraph
+                .foregroundColor: FPStyle.text
+                    .blended(withFraction: 0.34, of: FPStyle.dimText) ?? FPStyle.text,
+                .paragraphStyle: paragraph,
+                // Небольшая разрядка: с ней список читается спокойнее, чем
+                // плотно набранным почти белым текстом.
+                .kern: 0.25
             ]
         )
         button.wantsLayer = true
@@ -1834,7 +1872,17 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
             weight: FPStyle.isCyberEditorial ? .bold : .medium
         )
         field.textColor = FPStyle.dimText.withAlphaComponent(
-            FPStyle.isCyberEditorial ? 0.86 : 0.78
+            FPStyle.isCyberEditorial ? 0.72 : 0.62
+        )
+        // Заголовки разделов набраны в разрядку — так они читаются как
+        // рубрики, а не как ещё одна строка списка.
+        field.attributedStringValue = NSAttributedString(
+            string: field.stringValue,
+            attributes: [
+                .font: field.font as Any,
+                .foregroundColor: field.textColor as Any,
+                .kern: 1.1
+            ]
         )
         field.alignment = .left
         field.baseWritingDirection = .leftToRight

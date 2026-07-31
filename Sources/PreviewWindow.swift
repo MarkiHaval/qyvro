@@ -341,6 +341,25 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     /// Сетка под окном должна догонять удаление и отметку сразу.
     var onNeedsRefresh: (() -> Void)?
 
+    var isPresenting: Bool { window?.isVisible == true }
+
+    /// Подставляет файл, выбранный в проводнике, в выделенную панель.
+    ///
+    /// Просмотрщик остаётся открытым: переключаешься в проводник, тыкаешь
+    /// другой файл — он встаёт в ту панель, которая выделена, а соседние
+    /// остаются на своих кадрах.
+    func replaceFocusedPane(with request: FPQuickLookRequest) {
+        guard isPresenting, !request.entries.isEmpty else { return }
+        entries = request.entries
+        onIndexChanged = request.onIndexChanged
+        let target = min(max(request.initialIndex, 0), entries.count - 1)
+        normalizePaneIndices()
+        guard paneIndices.indices.contains(focusedPane) else { return }
+        paneIndices[focusedPane] = target
+        refreshPanes()
+        window?.makeKeyAndOrderFront(nil)
+    }
+
     init() {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1_100, height: 760),
