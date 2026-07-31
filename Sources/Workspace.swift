@@ -1259,16 +1259,23 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
             let point = self.rootSplitView.convert(event.locationInWindow, from: nil)
             switch event.type {
             case .leftMouseDown:
-                guard abs(point.x - sidebar.frame.maxX) <= 8,
-                      point.y >= self.rootSplitView.bounds.minY,
-                      point.y <= self.rootSplitView.bounds.maxY else { return event }
+                let edge = sidebar.frame.maxX
+                FPDiagnostics.log(
+                    "нажатие x=\(Int(point.x)) край=\(Int(edge)) "
+                        + "разница=\(Int(abs(point.x - edge))) "
+                        + "ширина=\(Int(sidebar.frame.width))"
+                )
+                guard abs(point.x - edge) <= 10 else { return event }
                 self.isDraggingSidebarEdge = true
+                FPDiagnostics.log("захват края начат")
                 return nil
             case .leftMouseDragged:
                 guard self.isDraggingSidebarEdge else { return event }
-                self.rootSplitView.setPosition(
-                    min(max(point.x, 200), 560),
-                    ofDividerAt: 0
+                let target = min(max(point.x, 200), 560)
+                self.rootSplitView.setPosition(target, ofDividerAt: 0)
+                self.rootSplitView.layoutSubtreeIfNeeded()
+                FPDiagnostics.log(
+                    "тяну к \(Int(target)) стало=\(Int(sidebar.frame.width))"
                 )
                 return nil
             default:
@@ -1433,8 +1440,16 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
     private func buildSidebar() -> NSView {
         let container = FPSidebarView()
         container.userInterfaceLayoutDirection = .leftToRight
-        container.widthAnchor.constraint(greaterThanOrEqualToConstant: 244).isActive = true
-        container.widthAnchor.constraint(lessThanOrEqualToConstant: 360).isActive = true
+        // Обязательные ограничения 244-360 перебивали любое перетаскивание
+        // разделителя: сплит-вью выставлял ширину, а автолейаут возвращал её
+        // обратно. Диапазон расширен и понижен в приоритете, чтобы решение
+        // оставалось за разделителем.
+        let minWidth = container.widthAnchor.constraint(greaterThanOrEqualToConstant: 200)
+        minWidth.priority = NSLayoutConstraint.Priority(999)
+        minWidth.isActive = true
+        let maxWidth = container.widthAnchor.constraint(lessThanOrEqualToConstant: 560)
+        maxWidth.priority = NSLayoutConstraint.Priority(999)
+        maxWidth.isActive = true
 
         configureSidebarSearchField()
 
@@ -1834,24 +1849,24 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         // Значок акцентным, подпись приглушённой: раньше и то и другое было
         // почти белым, панель выглядела плоско и слепила.
         button.contentTintColor = FPStyle.accent
-        let font = FPStyle.bodyFont(
-            ofSize: FPStyle.isCyberEditorial ? 12.5 : 13,
-            weight: FPStyle.isCyberEditorial ? .semibold : .medium
+        // Тот же шрифт, что у заголовков «Сегодня» и «Вчера» в ленте, и капс:
+        // боковая панель должна читаться как рубрикатор, а не как обычный
+        // список подписей.
+        let font = FPStyle.headingFont(
+            ofSize: FPStyle.isCyberEditorial ? 12 : 12.5,
+            weight: .semibold
         )
         button.font = font
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .left
         paragraph.baseWritingDirection = .leftToRight
         button.attributedTitle = NSAttributedString(
-            string: title,
+            string: title.uppercased(),
             attributes: [
                 .font: font,
-                .foregroundColor: FPStyle.text
-                    .blended(withFraction: 0.34, of: FPStyle.dimText) ?? FPStyle.text,
+                .foregroundColor: FPStyle.text,
                 .paragraphStyle: paragraph,
-                // Небольшая разрядка: с ней список читается спокойнее, чем
-                // плотно набранным почти белым текстом.
-                .kern: 0.25
+                .kern: 0.6
             ]
         )
         button.wantsLayer = true

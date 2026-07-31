@@ -984,9 +984,7 @@ final class GridSectionHeaderView: FPLayerView {
             ofSize: FPStyle.isCyberEditorial ? 14 : 13,
             weight: .semibold
         )
-        // «Сегодня», «Вчера» — акцентным цветом темы: они делят ленту на
-        // куски и должны читаться как ориентиры, а не как обычный текст.
-        titleField.textColor = FPStyle.accent
+        titleField.textColor = FPStyle.text
         titleField.translatesAutoresizingMaskIntoConstraints = false
 
         toggleButton.isBordered = false
@@ -1024,7 +1022,7 @@ final class GridSectionHeaderView: FPLayerView {
     func configure(id: String, title: String, totalCount: Int, expanded: Bool, canToggle: Bool) {
         sectionID = id
         titleField.stringValue = FPStyle.isCyberEditorial ? title.uppercased() : title
-        titleField.textColor = FPStyle.accent
+        titleField.textColor = FPStyle.text
         titleField.font = FPStyle.headingFont(
             ofSize: FPStyle.isCyberEditorial ? 14 : 13,
             weight: .semibold

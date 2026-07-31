@@ -923,12 +923,18 @@ final class TagDropButton: AnimatedSidebarButton {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .left
         paragraph.baseWritingDirection = .leftToRight
+        // Теги набираются так же, как остальные строки панели: свой шрифт
+        // здесь выбивался из общего рубрикатора.
         attributedTitle = NSAttributedString(
-            string: title,
+            string: title.uppercased(),
             attributes: [
-                .font: NSFont.systemFont(ofSize: 13, weight: .medium),
+                .font: FPStyle.headingFont(
+                    ofSize: FPStyle.isCyberEditorial ? 12 : 12.5,
+                    weight: .semibold
+                ),
                 .foregroundColor: FPStyle.text,
-                .paragraphStyle: paragraph
+                .paragraphStyle: paragraph,
+                .kern: 0.6
             ]
         )
         target = self

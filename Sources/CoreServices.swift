@@ -1426,3 +1426,29 @@ final class FPTagStore {
         NotificationCenter.default.post(name: .fpTagsDidChange, object: nil)
     }
 }
+
+/// Временная запись диагностики в файл. Используется, когда поведение нельзя
+/// воспроизвести автоматизацией: пользователь повторяет действие руками, а лог
+/// остаётся на диске. Удаляется вместе с отлаженным участком.
+enum FPDiagnostics {
+    private static let path = "/tmp/qyvro_diag.log"
+    private static let queue = DispatchQueue(label: "qyvro.diagnostics")
+    static var isEnabled = ProcessInfo.processInfo.environment["QYVRO_DIAG"] != nil
+        || FileManager.default.fileExists(atPath: "/tmp/qyvro_diag_on")
+
+    static func log(_ message: String) {
+        guard isEnabled else { return }
+        queue.async {
+            let stamp = ISO8601DateFormatter().string(from: Date())
+            let line = "\(stamp)  \(message)\n"
+            guard let data = line.data(using: .utf8) else { return }
+            if let handle = FileHandle(forWritingAtPath: path) {
+                handle.seekToEndOfFile()
+                handle.write(data)
+                try? handle.close()
+            } else {
+                try? data.write(to: URL(fileURLWithPath: path))
+            }
+        }
+    }
+}
