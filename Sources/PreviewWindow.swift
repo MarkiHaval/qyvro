@@ -387,12 +387,38 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
 
     private func installKeyMonitor() {
         guard keyMonitor == nil else { return }
-        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+        keyMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .leftMouseDown]
+        ) { [weak self] event in
             guard let self,
                   let window = self.window,
-                  window.isVisible,
-                  window.isKeyWindow else { return event }
+                  window.isVisible else { return event }
+            if event.type == .leftMouseDown {
+                // Выбор панели ловится здесь, потому что QLPreviewView
+                // занимает всю её площадь и забирает клики себе — до
+                // mouseDown самой панели они не доходят. Событие не
+                // съедается: воспроизведение и прокрутка внутри кадра
+                // должны продолжать работать.
+                guard event.window === window else { return event }
+                self.focusPane(at: event)
+                return event
+            }
+            guard window.isKeyWindow else { return event }
             return self.handle(event) ? nil : event
+        }
+    }
+
+    private func focusPane(at event: NSEvent) {
+        guard paneCount > 1 else { return }
+        for (position, pane) in contentView.panes.enumerated() {
+            let local = pane.convert(event.locationInWindow, from: nil)
+            guard pane.bounds.contains(local) else { continue }
+            guard position != focusedPane else { return }
+            focusedPane = position
+            updateFocusRings()
+            updateTitle()
+            if let url = focusedURL { onIndexChanged?(url) }
+            return
         }
     }
 
