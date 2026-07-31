@@ -486,6 +486,11 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = FPStyle.gradientEnd
         window.isOpaque = false
         window.backgroundColor = .clear
+        // Quick Look показывает элементы управления видео, пока видит движение
+        // мыши внутри себя, и прячет их по таймауту. Окно обязано явно
+        // запросить доставку этих событий: без запроса панель воспроизведения
+        // пряталась и не возвращалась при наведении.
+        window.acceptsMouseMovedEvents = true
         window.minSize = NSSize(width: 520, height: 420)
         // Зелёная кнопка растягивает окно по экрану, а не уводит в системный
         // полноэкранный режим: тот выносит окно на отдельный рабочий стол, и
