@@ -614,13 +614,13 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
 
     override func mouseDown(with event: NSEvent) {
         mouseDownPoint = convert(event.locationInWindow, from: nil)
-        // Звёздочка обрабатывается здесь, а не через hitTest: в hitTest точка
-        // приходит в системе координат надвью, и попасть по значку надёжно не
-        // получалось. Здесь координата переводится в систему самой ячейки
-        // явно, поэтому попадание однозначно.
+        // Звёздочка разбирается здесь, а не через hitTest: там точка приходит
+        // в системе координат надвью, и попасть по значку не получалось.
+        // Координата переводится сразу в систему самого значка и сравнивается
+        // с его bounds — так проверка не зависит ни от одной промежуточной
+        // системы координат в цепочке надвью.
         if !flagBadge.isHidden,
-           let point = mouseDownPoint,
-           flagBadge.frame.contains(point) {
+           flagBadge.bounds.contains(flagBadge.convert(event.locationInWindow, from: nil)) {
             onToggleFlag?(itemIndex)
             mouseDownPoint = nil
             return
