@@ -861,14 +861,15 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
             previewHeightConstraint,
             // Правый верхний угол миниатюры: не перекрывает ни подпись, ни
             // цветной кружок метки, который живёт слева.
-            flagBadge.trailingAnchor.constraint(equalTo: previewImageView.trailingAnchor),
-            flagBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor),
+            // Значок садится на сам кадр, а не на пустое поле рядом с ним.
+            flagBadge.trailingAnchor.constraint(equalTo: previewImageView.trailingAnchor, constant: -5),
+            flagBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor, constant: 5),
             versionBadge.leadingAnchor.constraint(equalTo: previewImageView.leadingAnchor, constant: -3),
             versionBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor, constant: -3),
             versionBadge.heightAnchor.constraint(equalToConstant: 20),
             versionBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 30),
-            flagBadge.widthAnchor.constraint(equalToConstant: 26),
-            flagBadge.heightAnchor.constraint(equalToConstant: 26),
+            flagBadge.widthAnchor.constraint(equalToConstant: 20),
+            flagBadge.heightAnchor.constraint(equalToConstant: 20),
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             titleField.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 4),
@@ -1379,34 +1380,40 @@ final class FPSelectedFlagBadge: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        // Срезанный угол вместо кружка со значком: он не закрывает содержимое
-        // миниатюры, читается на любом масштабе сетки и не содержит иконки,
-        // которой было бы нечему выглядеть казённо.
-        let side = min(bounds.width, bounds.height)
-        let corner = NSPoint(x: bounds.maxX, y: bounds.maxY)
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: corner.x - side, y: corner.y))
-        path.line(to: corner)
-        path.line(to: NSPoint(x: corner.x, y: corner.y - side))
-        path.close()
+        // Точка с кольцом: мелкая, не закрывает кадр и не спорит с ним
+        // формой. Ступени различаются только цветом — значка внутри нет,
+        // поэтому нечему выглядеть казённо на любом масштабе сетки.
+        let center = NSPoint(x: bounds.midX, y: bounds.midY)
+        let dotRadius = min(bounds.width, bounds.height) * 0.28
+        let ringRadius = min(bounds.width, bounds.height) * 0.46
+
+        func circle(_ radius: CGFloat) -> NSBezierPath {
+            NSBezierPath(ovalIn: NSRect(
+                x: center.x - radius,
+                y: center.y - radius,
+                width: radius * 2,
+                height: radius * 2
+            ))
+        }
+
+        // Тёмная подложка под кольцом: на светлой картинке цвет иначе тонет.
+        NSColor.black.withAlphaComponent(level == .none ? 0.22 : 0.34).setFill()
+        circle(ringRadius + 1).fill()
 
         switch level {
         case .none:
-            // Пустое состояние — только контур: подсказывает, куда нажать, и
-            // не спорит с картинкой.
-            NSColor.white.withAlphaComponent(0.55).setStroke()
-            path.lineWidth = 1.5
-            path.stroke()
-        case .candidate:
-            NSColor.black.withAlphaComponent(0.35).setFill()
-            path.fill()
-            FPStyle.orange.setFill()
-            path.fill()
-        case .confirmed:
-            NSColor.black.withAlphaComponent(0.35).setFill()
-            path.fill()
-            FPStyle.accent.setFill()
-            path.fill()
+            NSColor.white.withAlphaComponent(0.62).setStroke()
+            let ring = circle(dotRadius)
+            ring.lineWidth = 1.5
+            ring.stroke()
+        case .candidate, .confirmed:
+            let color = level == .candidate ? FPStyle.orange : FPStyle.accent
+            color.setFill()
+            circle(dotRadius).fill()
+            color.withAlphaComponent(0.45).setStroke()
+            let ring = circle(ringRadius)
+            ring.lineWidth = 1.5
+            ring.stroke()
         }
     }
 }
