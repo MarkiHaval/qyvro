@@ -1545,6 +1545,7 @@ enum FPGridFilter: String, CaseIterable {
     case images
     case videos
     case flagged
+    case confirmed
     case flaggedToday
     case today
     case yesterday
@@ -1557,6 +1558,7 @@ enum FPGridFilter: String, CaseIterable {
         case .images: return "Только картинки"
         case .videos: return "Только видео"
         case .flagged: return "★ Отмеченные"
+        case .confirmed: return "★★ Точно берём"
         case .flaggedToday: return "★ Отмечено сегодня"
         case .today: return "Сегодня"
         case .yesterday: return "Вчера"
@@ -1572,6 +1574,7 @@ enum FPGridFilter: String, CaseIterable {
         case .images: return "Картинки"
         case .videos: return "Видео"
         case .flagged: return "★"
+        case .confirmed: return "★★"
         case .flaggedToday: return "★ сегодня"
         case .today: return "Сегодня"
         case .yesterday: return "Вчера"
@@ -1585,7 +1588,7 @@ enum FPGridFilter: String, CaseIterable {
         case .all: return "line.3.horizontal.decrease"
         case .images: return "photo"
         case .videos: return "film"
-        case .flagged, .flaggedToday: return "star.fill"
+        case .flagged, .confirmed, .flaggedToday: return "star.fill"
         case .today, .yesterday, .week: return "calendar"
         case .heavy: return "scalemass"
         }
@@ -1606,6 +1609,8 @@ enum FPGridFilter: String, CaseIterable {
             return FPMediaInfoCache.movieExtensions.contains(ext)
         case .flagged:
             return FPFinderTagStore.isFlagged(item.finderTags ?? [])
+        case .confirmed:
+            return FPFinderTagStore.flagLevel(item.finderTags ?? []) == .confirmed
         case .flaggedToday:
             guard FPFinderTagStore.isFlagged(item.finderTags ?? []) else { return false }
             // Время постановки отметки отдельно не хранится: метка пишется в

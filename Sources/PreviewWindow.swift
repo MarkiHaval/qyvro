@@ -198,7 +198,7 @@ final class FPPreviewPane: NSView {
     func refreshFlag() {
         guard let url else { return }
         flagBadge.isHidden = false
-        flagBadge.isFlagged = FPFinderTagStore.isFlagged(url: url)
+        flagBadge.level = FPFinderTagStore.flagLevel(url: url)
     }
 
     private func refreshDetail(for url: URL) {
@@ -746,8 +746,9 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func toggleFlag(_ url: URL) {
-        let flagged = FPFinderTagStore.isFlagged(url: url)
-        guard (try? FPFinderTagStore.setFlag(!flagged, on: url)) != nil else {
+        let next = FPFinderTagStore.flagLevel(url: url).next
+        FPActionLog.action("отметка → \(next)", url.lastPathComponent)
+        guard (try? FPFinderTagStore.setFlagLevel(next, on: url)) != nil else {
             NSSound.beep()
             return
         }

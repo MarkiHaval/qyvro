@@ -74,36 +74,87 @@ enum FPFinderTagStore {
     /// перемещение и переименование файла, видна в Finder и индексируется
     /// Spotlight, поэтому выборка «отмечено сегодня» не требует обхода папок.
     static let selectedFlagTitle = "★ Отобрано"
+    /// Вторая ступень: файл не просто понравился, а точно идёт в работу.
+    static let confirmedFlagTitle = "★★ Точно берём"
     private static let selectedFlagColorNumber = 5 // жёлтый
+    private static let confirmedFlagColorNumber = 2 // зелёный
+
+    /// Ступень отметки. Две ступени различаются цветом, а не числом значков:
+    /// две звёздочки рядом на плитке читались бы хуже, чем один значок,
+    /// сменивший цвет.
+    enum FlagLevel: Int {
+        case none = 0
+        case candidate = 1
+        case confirmed = 2
+
+        /// Следующая ступень по кругу: нажатие перебирает их по очереди.
+        var next: FlagLevel {
+            switch self {
+            case .none: return .candidate
+            case .candidate: return .confirmed
+            case .confirmed: return .none
+            }
+        }
+    }
+
+    static func flagLevel(_ values: [FPFinderTag]) -> FlagLevel {
+        if values.contains(where: { normalizedTitle($0.title) == normalizedTitle(confirmedFlagTitle) }) {
+            return .confirmed
+        }
+        if values.contains(where: { normalizedTitle($0.title) == normalizedTitle(selectedFlagTitle) }) {
+            return .candidate
+        }
+        return .none
+    }
+
+    static func flagLevel(url: URL) -> FlagLevel {
+        flagLevel(tags(for: url))
+    }
 
     static func isFlagged(_ values: [FPFinderTag]) -> Bool {
-        values.contains { normalizedTitle($0.title) == normalizedTitle(selectedFlagTitle) }
+        flagLevel(values) != .none
     }
 
     static func isFlagged(url: URL) -> Bool {
         isFlagged(tags(for: url))
     }
 
-    /// Ставит и снимает отметку, не трогая цветную метку файла.
+    /// Ставит ступень отметки, не трогая цветную метку файла.
     @discardableResult
-    static func setFlag(_ flagged: Bool, on url: URL) throws -> [FPFinderTag] {
+    static func setFlagLevel(_ level: FlagLevel, on url: URL) throws -> [FPFinderTag] {
         var values = tags(for: url).filter {
-            normalizedTitle($0.title) != normalizedTitle(selectedFlagTitle)
+            let title = normalizedTitle($0.title)
+            return title != normalizedTitle(selectedFlagTitle)
+                && title != normalizedTitle(confirmedFlagTitle)
         }
-        if flagged {
+        switch level {
+        case .none:
+            break
+        case .candidate:
             values.append(
                 FPFinderTag(title: selectedFlagTitle, colorNumber: selectedFlagColorNumber)
+            )
+        case .confirmed:
+            values.append(
+                FPFinderTag(title: confirmedFlagTitle, colorNumber: confirmedFlagColorNumber)
             )
         }
         try write(values, to: url)
         return values
     }
 
+    @discardableResult
+    static func setFlag(_ flagged: Bool, on url: URL) throws -> [FPFinderTag] {
+        try setFlagLevel(flagged ? .candidate : .none, on: url)
+    }
+
     static func preferredTag(for url: URL, among values: [FPFinderTag]) -> FPFinderTag? {
         // Отметка «отобрано» не должна перекрашивать цветной кружок файла:
         // это независимая ось, у файла может быть и цвет, и отметка.
         let values = values.filter {
-            normalizedTitle($0.title) != normalizedTitle(selectedFlagTitle)
+            let title = normalizedTitle($0.title)
+            return title != normalizedTitle(selectedFlagTitle)
+                && title != normalizedTitle(confirmedFlagTitle)
         }
         guard !values.isEmpty else { return nil }
         if let managedTitle = managedTitles()[url.standardizedFileURL.path],

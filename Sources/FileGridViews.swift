@@ -888,6 +888,7 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         cut: Bool,
         versionCount: Int = 0
     ) {
+        flagBadge.level = FPFinderTagStore.flagLevel(item.finderTags ?? [])
         versionBadge.count = versionCount
         versionBadge.isHidden = versionCount < 2
         let path = item.url.standardizedFileURL.path
@@ -1355,10 +1356,15 @@ final class FileInspectorController: NSWindowController {
 /// звездой, иначе на светлых кадрах отметка теряется. Цвет берётся из темы,
 /// поэтому значок следует за палитрой проводника.
 final class FPSelectedFlagBadge: NSView {
-    /// Отмечен ли файл. Когда нет — значок показывается только под курсором
-    /// и приглушённо, чтобы сетка не рябила от звёздочек.
-    var isFlagged = false {
+    /// Ступень отметки. Когда её нет — значок показывается только под
+    /// курсором и приглушённо, чтобы сетка не рябила от звёздочек.
+    var level: FPFinderTagStore.FlagLevel = .none {
         didSet { needsDisplay = true }
+    }
+
+    var isFlagged: Bool {
+        get { level != .none }
+        set { level = newValue ? .candidate : .none }
     }
     var onToggle: (() -> Void)?
 
@@ -1376,9 +1382,17 @@ final class FPSelectedFlagBadge: NSView {
         let inset = bounds.insetBy(dx: 1, dy: 1)
         let circle = NSBezierPath(ovalIn: inset)
 
+        // Ступени различаются цветом: «кандидат» — акцент темы, «точно
+        // берём» — тот же салатовый, что у подписей боковой панели.
+        let fill: NSColor
+        switch level {
+        case .none: fill = NSColor.white.withAlphaComponent(0.34)
+        case .candidate: fill = FPStyle.orange
+        case .confirmed: fill = FPStyle.accent
+        }
         NSColor.black.withAlphaComponent(isFlagged ? 0.55 : 0.42).setFill()
         NSBezierPath(ovalIn: bounds).fill()
-        (isFlagged ? FPStyle.orange : NSColor.white.withAlphaComponent(0.34)).setFill()
+        fill.setFill()
         circle.fill()
 
         let star = NSBezierPath()

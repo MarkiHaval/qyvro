@@ -1209,9 +1209,11 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         guard filteredItems.indices.contains(index) else { return }
         let item = filteredItems[index]
         guard !item.isDirectory else { return }
-        let flagged = FPFinderTagStore.isFlagged(item.finderTags ?? [])
+        // Нажатие перебирает ступени по кругу: нет → кандидат → точно берём.
+        let next = FPFinderTagStore.flagLevel(item.finderTags ?? []).next
         do {
-            try FPFinderTagStore.setFlag(!flagged, on: item.url)
+            try FPFinderTagStore.setFlagLevel(next, on: item.url)
+            FPActionLog.action("отметка → \(next)", item.name)
         } catch {
             showError("Не удалось изменить отметку: \(error.localizedDescription)")
             return
