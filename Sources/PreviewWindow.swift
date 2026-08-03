@@ -79,10 +79,11 @@ final class FPPreviewPane: NSView {
             focusRing.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: 2),
             focusRing.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: 2),
 
-            flagBadge.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -10),
-            flagBadge.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 10),
-            flagBadge.widthAnchor.constraint(equalToConstant: 24),
-            flagBadge.heightAnchor.constraint(equalToConstant: 24)
+            // Срез прижат к самому углу кадра, как и в сетке.
+            flagBadge.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
+            flagBadge.topAnchor.constraint(equalTo: previewContainer.topAnchor),
+            flagBadge.widthAnchor.constraint(equalToConstant: 34),
+            flagBadge.heightAnchor.constraint(equalToConstant: 34)
         ])
     }
 

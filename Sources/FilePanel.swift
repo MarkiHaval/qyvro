@@ -1209,8 +1209,10 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         guard filteredItems.indices.contains(index) else { return }
         let item = filteredItems[index]
         guard !item.isDirectory else { return }
-        // Нажатие перебирает ступени по кругу: нет → кандидат → точно берём.
-        let next = FPFinderTagStore.flagLevel(item.finderTags ?? []).next
+        // Ступень читается из самого файла, а не из кэша списка папки: в
+        // быстром первом проходе метки там ещё не заполнены, и следующая
+        // ступень всегда получалась «кандидат» — цвет не менялся никогда.
+        let next = FPFinderTagStore.flagLevel(url: item.url).next
         do {
             try FPFinderTagStore.setFlagLevel(next, on: item.url)
             FPActionLog.action("отметка → \(next)", item.name)

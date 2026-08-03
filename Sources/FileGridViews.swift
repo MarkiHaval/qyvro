@@ -861,14 +861,14 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
             previewHeightConstraint,
             // Правый верхний угол миниатюры: не перекрывает ни подпись, ни
             // цветной кружок метки, который живёт слева.
-            flagBadge.trailingAnchor.constraint(equalTo: previewImageView.trailingAnchor, constant: 3),
-            flagBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor, constant: -3),
+            flagBadge.trailingAnchor.constraint(equalTo: previewImageView.trailingAnchor),
+            flagBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor),
             versionBadge.leadingAnchor.constraint(equalTo: previewImageView.leadingAnchor, constant: -3),
             versionBadge.topAnchor.constraint(equalTo: previewImageView.topAnchor, constant: -3),
             versionBadge.heightAnchor.constraint(equalToConstant: 20),
             versionBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 30),
-            flagBadge.widthAnchor.constraint(equalToConstant: 18),
-            flagBadge.heightAnchor.constraint(equalToConstant: 18),
+            flagBadge.widthAnchor.constraint(equalToConstant: 26),
+            flagBadge.heightAnchor.constraint(equalToConstant: 26),
             titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             titleField.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 4),
@@ -1379,38 +1379,35 @@ final class FPSelectedFlagBadge: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        let inset = bounds.insetBy(dx: 1, dy: 1)
-        let circle = NSBezierPath(ovalIn: inset)
+        // Срезанный угол вместо кружка со значком: он не закрывает содержимое
+        // миниатюры, читается на любом масштабе сетки и не содержит иконки,
+        // которой было бы нечему выглядеть казённо.
+        let side = min(bounds.width, bounds.height)
+        let corner = NSPoint(x: bounds.maxX, y: bounds.maxY)
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: corner.x - side, y: corner.y))
+        path.line(to: corner)
+        path.line(to: NSPoint(x: corner.x, y: corner.y - side))
+        path.close()
 
-        // Ступени различаются цветом: «кандидат» — акцент темы, «точно
-        // берём» — тот же салатовый, что у подписей боковой панели.
-        let fill: NSColor
         switch level {
-        case .none: fill = NSColor.white.withAlphaComponent(0.34)
-        case .candidate: fill = FPStyle.orange
-        case .confirmed: fill = FPStyle.accent
+        case .none:
+            // Пустое состояние — только контур: подсказывает, куда нажать, и
+            // не спорит с картинкой.
+            NSColor.white.withAlphaComponent(0.55).setStroke()
+            path.lineWidth = 1.5
+            path.stroke()
+        case .candidate:
+            NSColor.black.withAlphaComponent(0.35).setFill()
+            path.fill()
+            FPStyle.orange.setFill()
+            path.fill()
+        case .confirmed:
+            NSColor.black.withAlphaComponent(0.35).setFill()
+            path.fill()
+            FPStyle.accent.setFill()
+            path.fill()
         }
-        NSColor.black.withAlphaComponent(isFlagged ? 0.55 : 0.42).setFill()
-        NSBezierPath(ovalIn: bounds).fill()
-        fill.setFill()
-        circle.fill()
-
-        let star = NSBezierPath()
-        let center = NSPoint(x: inset.midX, y: inset.midY)
-        let outer = inset.width * 0.34
-        let inner = outer * 0.42
-        for step in 0..<10 {
-            let radius = step % 2 == 0 ? outer : inner
-            let angle = .pi / 2 + CGFloat(step) * .pi / 5
-            let point = NSPoint(
-                x: center.x + cos(angle) * radius,
-                y: center.y + sin(angle) * radius
-            )
-            step == 0 ? star.move(to: point) : star.line(to: point)
-        }
-        star.close()
-        NSColor.black.withAlphaComponent(isFlagged ? 0.82 : 0.55).setFill()
-        star.fill()
     }
 }
 
