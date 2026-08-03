@@ -1519,11 +1519,23 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                 localY >= section.rowOffsets[$0]
                     && localY <= section.rowOffsets[$0] + section.rowHeights[$0]
             }) else { return nil }
-            let xInGrid = point.x - layout.leadingInset
-            guard xInGrid >= 0 else { return nil }
-            let column = layout.columns == 1 ? 0 : Int(floor(xInGrid / (layout.itemSize.width + layout.spacing)))
-            guard column >= 0, column < layout.columns else { return nil }
-            let position = row * layout.columns + column
+            let pitch = layout.itemSize.width + layout.spacing
+            let position: Int
+            if section.isHorizontal {
+                // Свёрнутый ряд сдвинут вбок, и номер плитки считается от его
+                // собственного начала, а не от левого края окна. Без учёта
+                // сдвига клики после листания попадали мимо, а ограничение по
+                // числу колонок отсекало всё, что уехало за первый экран, —
+                // выделение переставало работать вовсе.
+                guard pitch > 0 else { return nil }
+                position = Int(floor((point.x - layout.leadingInset + section.horizontalOffset) / pitch))
+            } else {
+                let xInGrid = point.x - layout.leadingInset
+                guard xInGrid >= 0 else { return nil }
+                let column = layout.columns == 1 ? 0 : Int(floor(xInGrid / pitch))
+                guard column >= 0, column < layout.columns else { return nil }
+                position = row * layout.columns + column
+            }
             guard position >= 0, position < section.displayedIndexes.count else { return nil }
             let index = section.displayedIndexes[position]
             return gridFrame(for: index, layout: layout).contains(point) ? index : nil
