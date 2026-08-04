@@ -1418,9 +1418,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
 
     @objc private func revealSelection(_ sender: Any?) { activeWorkspace?.revealSelection(sender) }
     @objc private func copyPaths(_ sender: Any?) { activeWorkspace?.copyPaths(sender) }
-    @objc private func copyFiles(_ sender: Any?) { activeWorkspace?.copyFiles(sender) }
-    @objc private func cutFiles(_ sender: Any?) { activeWorkspace?.cutFiles(sender) }
-    @objc private func pasteFiles(_ sender: Any?) { activeWorkspace?.pasteFiles(sender) }
+    /// Идёт ли сейчас правка текста.
+    ///
+    /// Cmd+C, Cmd+X и Cmd+V в меню отвечают за операции с файлами. Внутри
+    /// текстового поля человек ждёт от них работы с текстом, а получал
+    /// копирование файла — так не работали ни переименование, ни строка
+    /// поиска. Когда курсор стоит в поле, действие уходит по цепочке
+    /// откликов в само поле.
+    private var isEditingText: Bool {
+        NSApp.keyWindow?.firstResponder is NSText
+    }
+
+    @objc private func copyFiles(_ sender: Any?) {
+        guard !isEditingText else {
+            NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: sender)
+            return
+        }
+        activeWorkspace?.copyFiles(sender)
+    }
+
+    @objc private func cutFiles(_ sender: Any?) {
+        guard !isEditingText else {
+            NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: sender)
+            return
+        }
+        activeWorkspace?.cutFiles(sender)
+    }
+
+    @objc private func pasteFiles(_ sender: Any?) {
+        guard !isEditingText else {
+            NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: sender)
+            return
+        }
+        activeWorkspace?.pasteFiles(sender)
+    }
     @objc private func goBack(_ sender: Any?) { activeWorkspace?.goBack(sender) }
     @objc private func goForward(_ sender: Any?) { activeWorkspace?.goForward(sender) }
     @objc private func goUp(_ sender: Any?) { activeWorkspace?.goUp(sender) }

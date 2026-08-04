@@ -140,6 +140,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     /// при прокрутке это сотни обращений, — поэтому изменённое держится в
     /// памяти и имеет приоритет над кэшем.
     private var flagLevelOverrides: [String: FPFinderTagStore.FlagLevel] = [:]
+    private var renameSheet: FPRenameSheet?
     private var folderViewStates: [String: FolderViewState] = [:]
     private var pendingFolderViewState: FolderViewState?
     private var history: [HistoryEntry] = []
@@ -3640,38 +3641,36 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
 
     @objc func renameSelection(_ sender: Any?) {
         activate()
-        guard selectedItems.count == 1, let item = selectedItems.first else { return }
+        guard selectedItems.count == 1, let item = selectedItems.first,
+              let window else { return }
 
-        let alert = NSAlert()
-        alert.messageText = "Переименовать"
-        alert.informativeText = item.name
-        alert.addButton(withTitle: "Переименовать")
-        alert.addButton(withTitle: "Отмена")
+        let sheet = FPRenameSheet()
+        renameSheet = sheet
+        sheet.present(name: item.name, over: window) { [weak self] newName in
+            guard let self else { return }
+            self.renameSheet = nil
+            guard let newName else { return }
+            FPActionLog.action("переименование", "\(item.name) → \(newName)")
+            self.applyRename(item: item, newName: newName)
+        }
+    }
 
-        let field = NSTextField(string: item.name)
-        field.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-
-        if alert.runModal() == .alertFirstButtonReturn {
-            let newName = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !newName.isEmpty, newName != item.name, !newName.contains("/") else { return }
-            let destination = item.url.deletingLastPathComponent().appendingPathComponent(newName)
-            do {
-                try fileManager.moveItem(at: item.url, to: destination)
-                var assignments = folderColorMap()
-                if let tagKey = assignments.removeValue(forKey: item.url.standardizedFileURL.path) {
-                    assignments[destination.standardizedFileURL.path] = tagKey
-                    UserDefaults.standard.set(assignments, forKey: "FolderColors")
-                }
-                FPFinderTagStore.moveManagedRecord(from: item.url, to: destination)
-                DirectorySnapshotCache.shared.invalidate(item.url.deletingLastPathComponent())
-                QyvroFileOperationHistory.shared.recordRename([(item.url, destination)])
-                loadCurrentDirectory()
-                select(url: destination)
-            } catch {
-                showError(error.localizedDescription)
+    private func applyRename(item: FileItem, newName: String) {
+        let destination = item.url.deletingLastPathComponent().appendingPathComponent(newName)
+        do {
+            try fileManager.moveItem(at: item.url, to: destination)
+            var assignments = folderColorMap()
+            if let tagKey = assignments.removeValue(forKey: item.url.standardizedFileURL.path) {
+                assignments[destination.standardizedFileURL.path] = tagKey
+                UserDefaults.standard.set(assignments, forKey: "FolderColors")
             }
+            FPFinderTagStore.moveManagedRecord(from: item.url, to: destination)
+            DirectorySnapshotCache.shared.invalidate(item.url.deletingLastPathComponent())
+            QyvroFileOperationHistory.shared.recordRename([(item.url, destination)])
+            loadCurrentDirectory()
+            select(url: destination)
+        } catch {
+            showError(error.localizedDescription)
         }
     }
 
