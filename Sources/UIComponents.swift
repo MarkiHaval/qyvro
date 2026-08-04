@@ -188,14 +188,13 @@ final class TagManagerController: NSWindowController, NSTableViewDataSource, NST
 
     private func buildUI() {
         guard let window else { return }
-        let root = NSVisualEffectView()
-        root.material = .sidebar
-        root.blendingMode = .behindWindow
-        root.state = .active
-        root.wantsLayer = true
+        // Та же подложка, что у переименования, настроек и буфера. Раньше окно
+        // красилось отдельным цветом `tagWindow` и потому выглядело чужим:
+        // фиолетовое рядом с почти чёрными остальными.
+        let root = FPAuxiliaryBackdrop(frame: .zero)
         window.contentView = root
 
-        let backgroundTint = FPBackgroundTintView(color: FPStyle.tagWindow)
+        let backgroundTint = FPBackgroundTintView(color: .clear)
         backgroundTintView = backgroundTint
         root.addSubview(backgroundTint)
         NSLayoutConstraint.activate([
@@ -205,7 +204,7 @@ final class TagManagerController: NSWindowController, NSTableViewDataSource, NST
             backgroundTint.bottomAnchor.constraint(equalTo: root.bottomAnchor)
         ])
 
-        let heading = NSTextField(labelWithString: "Имена и цвета тегов")
+        let heading = NSTextField(labelWithString: "ИМЕНА И ЦВЕТА МЕТОК")
         heading.font = .systemFont(ofSize: 17, weight: .semibold)
         heading.textColor = FPStyle.text
         heading.translatesAutoresizingMaskIntoConstraints = false
@@ -266,7 +265,10 @@ final class TagManagerController: NSWindowController, NSTableViewDataSource, NST
     }
 
     private func applyAppearance() {
-        backgroundTintView?.setColor(FPStyle.tagWindow)
+        // Цвет окна берётся из общей подложки, отдельный `tagWindow` больше не
+        // применяется: из-за него окно выпадало из оформления.
+        backgroundTintView?.setColor(.clear)
+        (window?.contentView as? FPAuxiliaryBackdrop)?.applyTheme()
     }
 
     private func reloadRows() {

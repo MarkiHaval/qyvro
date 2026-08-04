@@ -436,30 +436,40 @@ private extension NSImage {
 }
 
 private final class QyvroClipboardGlassView: NSVisualEffectView {
+    /// Тон кладётся отдельным видом поверх размытия.
+    ///
+    /// `NSVisualEffectView` не отдаёт под тон ни `draw(_:)`, ни цвет
+    /// собственного слоя: материал перекрывает и то, и другое. Обе попытки
+    /// красить его напрямую не дошли до экрана, и окно показывало голое
+    /// размытие, сквозь которое просвечивали обои рабочего стола. Отдельный
+    /// вид сверху — тот же приём, что и в подложке остальных окон.
+    private let tintView = FPLayerView(color: .clear)
+
     var tint = FPStyle.pane {
-        didSet { applyTint() }
+        didSet { tintView.setColor(tint) }
     }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
-        wantsLayer = true
-        applyTint()
+        installTintView()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        wantsLayer = true
-        applyTint()
+        installTintView()
     }
 
-    /// Тон задаётся цветом слоя, а не рисованием в `draw(_:)`.
-    ///
-    /// Размытие `NSVisualEffectView` рисует система прямо в слое, и заливка
-    /// поверх него до экрана не доходила — тон не применялся вообще. Окно
-    /// показывало голое размытие, сквозь которое просвечивали обои рабочего
-    /// стола и красили буфер в их цвет.
-    private func applyTint() {
-        layer?.backgroundColor = tint.cgColor
+    private func installTintView() {
+        wantsLayer = true
+        tintView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(tintView)
+        NSLayoutConstraint.activate([
+            tintView.topAnchor.constraint(equalTo: topAnchor),
+            tintView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tintView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tintView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        tintView.setColor(tint)
     }
 }
 
