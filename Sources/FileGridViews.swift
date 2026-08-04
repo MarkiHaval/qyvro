@@ -927,7 +927,10 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
                 self.kindField.stringValue = FPTileCaption.text(for: item, media: info)
             }
         }
-        flagBadge.isFlagged = FPFinderTagStore.isFlagged(item.finderTags ?? [])
+        // Ступень уже выставлена в начале configure и учитывает изменения
+        // этого сеанса. Прежнее присваивание отсюда убрано: оно перезаписывало
+        // её значением из кэша — сбрасывало «точно берём» до «кандидата», а на
+        // незаполненном кэше прятало значок совсем.
         updateFlagBadgeVisibility()
         toolTip = hoverTooltip(for: item)
         setAccessibilityLabel(item.name)
