@@ -97,6 +97,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             NSApp.activate(ignoringOtherApps: true)
             return
         }
+        // Повторное нажатие прячет проводник и возвращает фокус тому, с чем
+        // человек работал. Так вызов превращается в переключатель: одна и та
+        // же клавиша показывает окно и убирает его, не отвлекая на поиск
+        // мышью.
+        if NSApp.isActive,
+           window.isVisible,
+           !window.isMiniaturized,
+           window.isKeyWindow {
+            FPActionLog.action("проводник свёрнут повторным вызовом")
+            window.level = .normal
+            NSApp.hide(nil)
+            return
+        }
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
@@ -1109,7 +1122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         let windowMenu = NSMenu(title: "Окно")
         // Глобальный ⌘E перехватывается Carbon-хоткеем раньше меню; пункт меню
         // остаётся для мыши и как подсказка о сочетании клавиш.
-        windowMenu.addItem(withTitle: "Вызвать Qyvro на этот стол", action: #selector(summonExplorerWindow(_:)), keyEquivalent: "e")
+        windowMenu.addItem(withTitle: "Показать или скрыть Qyvro", action: #selector(summonExplorerWindow(_:)), keyEquivalent: "e")
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
 
