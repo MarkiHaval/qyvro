@@ -168,10 +168,10 @@ final class CommandPaletteController: NSWindowController, NSWindowDelegate, NSTa
         icon.contentTintColor = FPStyle.orange
         icon.translatesAutoresizingMaskIntoConstraints = false
         let title = NSTextField(labelWithString: command.title)
-        title.font = .systemFont(ofSize: 13.5, weight: .semibold)
+        title.font = FPStyle.headingFont(ofSize: 13, weight: .semibold)
         title.textColor = FPStyle.text
         let subtitle = NSTextField(labelWithString: command.subtitle)
-        subtitle.font = .systemFont(ofSize: 11, weight: .regular)
+        subtitle.font = FPStyle.bodyFont(ofSize: 11, weight: .regular)
         subtitle.textColor = FPStyle.dimText
         let labels = NSStackView(views: [title, subtitle])
         labels.orientation = .vertical
@@ -355,7 +355,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private func buildUI() {
         guard let window else { return }
         let effect = NSVisualEffectView()
-        effect.material = .sidebar
+        // Тот же материал, что у остальных вспомогательных окон.
+        effect.material = .underWindowBackground
         effect.blendingMode = .behindWindow
         effect.state = .active
         effect.wantsLayer = true
@@ -365,18 +366,39 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let backgroundTint = FPBackgroundTintView(color: FPStyle.settingsWindow)
         backgroundTintView = backgroundTint
         effect.addSubview(backgroundTint)
+        // Едва заметный тон градиента темы поверх заливки: без него окно
+        // настроек оставалось плоским и выпадало из общего оформления.
+        let themeTint = FPBackgroundGradientView()
+        themeTint.translatesAutoresizingMaskIntoConstraints = false
+        themeTint.setColors(
+            FPStyle.gradientEnabled
+                ? [
+                    FPStyle.gradientStart.withAlphaComponent(0.16),
+                    FPStyle.gradientEnd.withAlphaComponent(0.16)
+                ]
+                : [
+                    FPStyle.window.withAlphaComponent(0.16),
+                    FPStyle.window.withAlphaComponent(0.16)
+                ]
+        )
+        effect.addSubview(themeTint)
         NSLayoutConstraint.activate([
             backgroundTint.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
             backgroundTint.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
             backgroundTint.topAnchor.constraint(equalTo: effect.topAnchor),
-            backgroundTint.bottomAnchor.constraint(equalTo: effect.bottomAnchor)
+            backgroundTint.bottomAnchor.constraint(equalTo: effect.bottomAnchor),
+            themeTint.leadingAnchor.constraint(equalTo: effect.leadingAnchor),
+            themeTint.trailingAnchor.constraint(equalTo: effect.trailingAnchor),
+            themeTint.topAnchor.constraint(equalTo: effect.topAnchor),
+            themeTint.bottomAnchor.constraint(equalTo: effect.bottomAnchor)
         ])
 
-        let title = NSTextField(labelWithString: "Настройки")
-        title.font = .systemFont(ofSize: 20, weight: .bold)
+        let title = NSTextField(labelWithString: "НАСТРОЙКИ")
+        // Заголовок как рубрики проводника, а не системным полужирным.
+        title.font = FPStyle.headingFont(ofSize: 17, weight: .semibold)
         title.textColor = FPStyle.text
         let subtitle = NSTextField(labelWithString: "Изменения сразу видны во всех окнах проводника")
-        subtitle.font = .systemFont(ofSize: 11, weight: .regular)
+        subtitle.font = FPStyle.bodyFont(ofSize: 11, weight: .regular)
         subtitle.textColor = FPStyle.dimText
         let heading = NSStackView(views: [title, subtitle])
         heading.orientation = .vertical

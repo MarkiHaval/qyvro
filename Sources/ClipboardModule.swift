@@ -714,7 +714,9 @@ private final class QyvroClipboardViewController:
         root.material = .underWindowBackground
         root.blendingMode = .behindWindow
         root.state = .active
-        root.tint = FPStyle.window.withAlphaComponent(FPStyle.isCyberEditorial ? 0.88 : 0.96)
+        // Тот же тон, что у остальных вспомогательных окон: они должны
+        // выглядеть частями одной программы, а не тремя разными.
+        root.tint = FPStyle.window.withAlphaComponent(0.94)
         rootGlass = root
         view = root
 
@@ -725,14 +727,14 @@ private final class QyvroClipboardViewController:
         sidebar.material = .sidebar
         sidebar.blendingMode = .withinWindow
         sidebar.state = .active
-        sidebar.tint = FPStyle.sidebar.withAlphaComponent(FPStyle.isCyberEditorial ? 0.84 : 0.96)
+        sidebar.tint = FPStyle.sidebar.withAlphaComponent(0.55)
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         sidebarGlass = sidebar
         let content = QyvroClipboardGlassView()
         content.material = .hudWindow
         content.blendingMode = .withinWindow
         content.state = .active
-        content.tint = FPStyle.pane.withAlphaComponent(FPStyle.isCyberEditorial ? 0.82 : 0.96)
+        content.tint = FPStyle.pane.withAlphaComponent(0.42)
         content.translatesAutoresizingMaskIntoConstraints = false
         contentGlass = content
         root.addSubview(sidebar)
@@ -743,8 +745,10 @@ private final class QyvroClipboardViewController:
         brand.textColor = FPStyle.orange
         brand.translatesAutoresizingMaskIntoConstraints = false
         brandLabel = brand
-        let heading = NSTextField(labelWithString: "Буфер")
-        heading.font = FPStyle.headingFont(ofSize: 23, weight: .bold)
+        let heading = NSTextField(labelWithString: "БУФЕР")
+        // Заголовки набраны как рубрики проводника: капс с разрядкой вместо
+        // крупного жирного начертания — так окно выглядит частью программы.
+        heading.font = FPStyle.headingFont(ofSize: 17, weight: .semibold)
         heading.textColor = FPStyle.text
         heading.translatesAutoresizingMaskIntoConstraints = false
         headingLabel = heading
@@ -798,18 +802,18 @@ private final class QyvroClipboardViewController:
             wrappingLabelWithString: "\(QyvroClipboardShortcut.displayName) — открыть панель\n⌘V — обычная вставка"
         )
         hint.textColor = FPStyle.dimText
-        hint.font = .systemFont(ofSize: 10.5)
+        hint.font = FPStyle.headingFont(ofSize: 10, weight: .semibold)
         hint.translatesAutoresizingMaskIntoConstraints = false
         hintLabel = hint
         sidebar.addSubview(hint)
 
-        let title = NSTextField(labelWithString: "История буфера")
-        title.font = FPStyle.headingFont(ofSize: 20, weight: .bold)
+        let title = NSTextField(labelWithString: "ИСТОРИЯ БУФЕРА")
+        title.font = FPStyle.headingFont(ofSize: 15, weight: .semibold)
         title.textColor = FPStyle.text
         title.translatesAutoresizingMaskIntoConstraints = false
         titleLabel = title
         countLabel.textColor = FPStyle.dimText
-        countLabel.font = .systemFont(ofSize: 12)
+        countLabel.font = .monospacedDigitSystemFont(ofSize: 11.5, weight: .semibold)
         countLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(title)
         content.addSubview(countLabel)
@@ -834,7 +838,7 @@ private final class QyvroClipboardViewController:
 
         emptyLabel.alignment = .center
         emptyLabel.textColor = FPStyle.dimText
-        emptyLabel.font = .systemFont(ofSize: 13)
+        emptyLabel.font = FPStyle.headingFont(ofSize: 12.5, weight: .semibold)
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(emptyLabel)
 

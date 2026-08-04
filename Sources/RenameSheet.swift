@@ -14,11 +14,9 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
         backing: .buffered,
         defer: false
     )
-    private let backdrop = NSVisualEffectView()
-    /// Тёмная основа под градиентом. Без неё градиент темы работал не тоном,
-    /// а всем фоном — окно уходило в лиловый и выпадало из оформления.
-    private let base = FPLayerView(color: .clear)
-    private let gradient = FPBackgroundGradientView()
+    /// Та же подложка, что у настроек, меток и буфера: вспомогательные окна
+    /// должны выглядеть одинаково.
+    private let backdrop = FPAuxiliaryBackdrop(frame: .zero)
     private let fieldBox = FPLayerView(color: .clear, cornerRadius: 9)
     private let heading = NSTextField(labelWithString: "ПЕРЕИМЕНОВАТЬ")
     private let currentName = NSTextField(labelWithString: "")
@@ -42,11 +40,6 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
         panel.isOpaque = false
 
         let content = NSView(frame: panel.contentLayoutRect)
-        backdrop.material = .underWindowBackground
-        backdrop.blendingMode = .behindWindow
-        backdrop.state = .active
-        backdrop.translatesAutoresizingMaskIntoConstraints = false
-        gradient.translatesAutoresizingMaskIntoConstraints = false
 
         heading.font = FPStyle.headingFont(ofSize: 13, weight: .semibold)
         heading.translatesAutoresizingMaskIntoConstraints = false
@@ -87,8 +80,6 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
         cancelButton.keyEquivalent = "\u{1b}"
 
         content.addSubview(backdrop)
-        content.addSubview(base)
-        content.addSubview(gradient)
         content.addSubview(heading)
         content.addSubview(currentName)
         content.addSubview(fieldBox)
@@ -102,14 +93,6 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
             backdrop.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             backdrop.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            base.topAnchor.constraint(equalTo: content.topAnchor),
-            base.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            base.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            base.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-            gradient.topAnchor.constraint(equalTo: content.topAnchor),
-            gradient.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            gradient.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            gradient.bottomAnchor.constraint(equalTo: content.bottomAnchor),
 
             heading.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             heading.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 20),
@@ -153,22 +136,7 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
     }
 
     private func applyTheme() {
-        let opacity = min(max(FPStyle.pane.alphaComponent, 0), 1)
-        // Те же значения, что у окна проводника: градиент читается тоном
-        // поверх тёмной основы, а не заливает окно целиком.
-        let gradientOpacity = min(0.75, 0.50 + opacity * 0.25)
-        base.setColor(FPStyle.window.withAlphaComponent(0.92))
-        gradient.setColors(
-            FPStyle.gradientEnabled
-                ? [
-                    FPStyle.gradientStart.withAlphaComponent(gradientOpacity),
-                    FPStyle.gradientEnd.withAlphaComponent(gradientOpacity)
-                ]
-                : [
-                    FPStyle.window.withAlphaComponent(gradientOpacity),
-                    FPStyle.window.withAlphaComponent(gradientOpacity)
-                ]
-        )
+        backdrop.applyTheme()
         heading.textColor = FPStyle.text
         currentName.textColor = FPStyle.dimText
         hint.textColor = FPStyle.dimText.withAlphaComponent(0.7)

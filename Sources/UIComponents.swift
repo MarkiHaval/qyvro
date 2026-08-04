@@ -1475,3 +1475,70 @@ final class FPDiskBreakdownRow: NSView {
         onPick?(filter)
     }
 }
+
+/// Общая подложка вспомогательных окон: переименование, настройки, метки,
+/// буфер обмена.
+///
+/// Раньше каждое окно строило фон по-своему — одно с градиентом, другое без,
+/// третье плоской заливкой, — и они не выглядели частями одной программы.
+/// Отдельная причина: градиент темы растянут на ширину окна проводника, а в
+/// маленьком окне тот же переход умещается целиком и читается втрое
+/// насыщеннее. Поэтому здесь он взят едва заметным тоном, а основу держит
+/// цвет окна.
+final class FPAuxiliaryBackdrop: NSVisualEffectView {
+    private let base = FPLayerView(color: .clear)
+    private let tint = FPBackgroundGradientView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        material = .underWindowBackground
+        blendingMode = .behindWindow
+        state = .active
+        wantsLayer = true
+        translatesAutoresizingMaskIntoConstraints = false
+
+        base.translatesAutoresizingMaskIntoConstraints = false
+        tint.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(base)
+        addSubview(tint)
+        NSLayoutConstraint.activate([
+            base.topAnchor.constraint(equalTo: topAnchor),
+            base.leadingAnchor.constraint(equalTo: leadingAnchor),
+            base.trailingAnchor.constraint(equalTo: trailingAnchor),
+            base.bottomAnchor.constraint(equalTo: bottomAnchor),
+            tint.topAnchor.constraint(equalTo: topAnchor),
+            tint.leadingAnchor.constraint(equalTo: leadingAnchor),
+            tint.trailingAnchor.constraint(equalTo: trailingAnchor),
+            tint.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+        applyTheme()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(themeChanged),
+            name: .fpThemeDidChange,
+            object: nil
+        )
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func themeChanged() { applyTheme() }
+
+    func applyTheme() {
+        base.setColor(FPStyle.window.withAlphaComponent(0.94))
+        // Доля градиента намеренно мала: в окне на 400 точек полный переход
+        // темы выглядел бы заливкой, а не оттенком.
+        let hint: CGFloat = 0.16
+        tint.setColors(
+            FPStyle.gradientEnabled
+                ? [
+                    FPStyle.gradientStart.withAlphaComponent(hint),
+                    FPStyle.gradientEnd.withAlphaComponent(hint)
+                ]
+                : [
+                    FPStyle.window.withAlphaComponent(hint),
+                    FPStyle.window.withAlphaComponent(hint)
+                ]
+        )
+    }
+}
