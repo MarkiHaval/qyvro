@@ -557,6 +557,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         slider.maxValue = max
         slider.doubleValue = value
         slider.isContinuous = true
+        // Заполненная часть ползунка красится акцентом темы. Без этого она
+        // берёт системный акцент macOS — оранжевый, независимо от того, какие
+        // цвета выбраны в приложении.
+        if #available(macOS 10.12.2, *) {
+            slider.trackFillColor = FPStyle.accent
+        }
         slider.target = self
         slider.action = #selector(controlChanged(_:))
         slider.widthAnchor.constraint(equalToConstant: 138).isActive = true

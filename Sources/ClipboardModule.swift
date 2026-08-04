@@ -727,14 +727,16 @@ private final class QyvroClipboardViewController:
         sidebar.material = .sidebar
         sidebar.blendingMode = .withinWindow
         sidebar.state = .active
-        sidebar.tint = FPStyle.sidebar.withAlphaComponent(0.55)
+        // Плотность высокая намеренно: сквозь редкую подложку просвечивают
+        // обои рабочего стола и окрашивают весь буфер в их цвет.
+        sidebar.tint = FPStyle.sidebar.withAlphaComponent(0.94)
         sidebar.translatesAutoresizingMaskIntoConstraints = false
         sidebarGlass = sidebar
         let content = QyvroClipboardGlassView()
         content.material = .hudWindow
         content.blendingMode = .withinWindow
         content.state = .active
-        content.tint = FPStyle.pane.withAlphaComponent(0.42)
+        content.tint = FPStyle.pane.withAlphaComponent(0.92)
         content.translatesAutoresizingMaskIntoConstraints = false
         contentGlass = content
         root.addSubview(sidebar)
