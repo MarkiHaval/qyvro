@@ -887,9 +887,10 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         imageSize: CGFloat,
         selected: Bool,
         cut: Bool,
-        versionCount: Int = 0
+        versionCount: Int = 0,
+        flagLevel: FPFinderTagStore.FlagLevel? = nil
     ) {
-        flagBadge.level = FPFinderTagStore.flagLevel(item.finderTags ?? [])
+        flagBadge.level = flagLevel ?? FPFinderTagStore.flagLevel(item.finderTags ?? [])
         versionBadge.count = versionCount
         versionBadge.isHidden = versionCount < 2
         let path = item.url.standardizedFileURL.path

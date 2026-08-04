@@ -132,6 +132,14 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     private var expandedVersionGroups = Set<String>()
     /// Сколько файлов скрыто под представителем, по пути представителя.
     private var versionGroupCounts: [String: Int] = [:]
+    /// Ступени отметки, изменённые в этом сеансе, по пути файла.
+    ///
+    /// Снимок папки кэшируется, и сразу после нажатия в нём ещё лежит прежняя
+    /// ступень: в плитке был один цвет, а в просмотрщике, который читает файл
+    /// напрямую, уже другой. Читать метки с диска на каждую плитку нельзя —
+    /// при прокрутке это сотни обращений, — поэтому изменённое держится в
+    /// памяти и имеет приоритет над кэшем.
+    private var flagLevelOverrides: [String: FPFinderTagStore.FlagLevel] = [:]
     private var folderViewStates: [String: FolderViewState] = [:]
     private var pendingFolderViewState: FolderViewState?
     private var history: [HistoryEntry] = []
@@ -1119,7 +1127,8 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                     imageSize: visibleIconSize,
                     selected: gridSelectionIndexes.contains(index),
                     cut: FPCutFileState.shared.contains(item.url),
-                    versionCount: versionGroupCounts[item.url.path] ?? 0
+                    versionCount: versionGroupCounts[item.url.path] ?? 0,
+                    flagLevel: flagLevel(for: item)
                 )
             } else {
                 cell.setSelected(gridSelectionIndexes.contains(index))
@@ -1215,6 +1224,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let next = FPFinderTagStore.flagLevel(url: item.url).next
         do {
             try FPFinderTagStore.setFlagLevel(next, on: item.url)
+            flagLevelOverrides[item.url.standardizedFileURL.path] = next
             FPActionLog.action("отметка → \(next)", item.name)
         } catch {
             showError("Не удалось изменить отметку: \(error.localizedDescription)")
@@ -1508,6 +1518,14 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             result[section.id] = section.horizontalOffset
         }
         return result
+    }
+
+    /// Ступень отметки для показа: изменённое в этом сеансе важнее кэша.
+    private func flagLevel(for item: FileItem) -> FPFinderTagStore.FlagLevel {
+        if let override = flagLevelOverrides[item.url.standardizedFileURL.path] {
+            return override
+        }
+        return FPFinderTagStore.flagLevel(item.finderTags ?? [])
     }
 
     private func gridIndex(at point: NSPoint) -> Int? {
