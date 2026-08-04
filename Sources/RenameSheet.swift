@@ -15,7 +15,11 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
         defer: false
     )
     private let backdrop = NSVisualEffectView()
+    /// Тёмная основа под градиентом. Без неё градиент темы работал не тоном,
+    /// а всем фоном — окно уходило в лиловый и выпадало из оформления.
+    private let base = FPLayerView(color: .clear)
     private let gradient = FPBackgroundGradientView()
+    private let fieldBox = FPLayerView(color: .clear, cornerRadius: 9)
     private let heading = NSTextField(labelWithString: "ПЕРЕИМЕНОВАТЬ")
     private let currentName = NSTextField(labelWithString: "")
     private let field = NSTextField(string: "")
@@ -60,7 +64,6 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
         field.translatesAutoresizingMaskIntoConstraints = false
         field.lineBreakMode = .byTruncatingMiddle
 
-        let fieldBox = FPLayerView(color: .clear, cornerRadius: 9)
         fieldBox.translatesAutoresizingMaskIntoConstraints = false
         fieldBox.layer?.borderWidth = 1
 
@@ -84,6 +87,7 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
         cancelButton.keyEquivalent = "\u{1b}"
 
         content.addSubview(backdrop)
+        content.addSubview(base)
         content.addSubview(gradient)
         content.addSubview(heading)
         content.addSubview(currentName)
@@ -98,6 +102,10 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
             backdrop.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             backdrop.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            base.topAnchor.constraint(equalTo: content.topAnchor),
+            base.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            base.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            base.bottomAnchor.constraint(equalTo: content.bottomAnchor),
             gradient.topAnchor.constraint(equalTo: content.topAnchor),
             gradient.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             gradient.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -129,12 +137,27 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
             cancelButton.widthAnchor.constraint(equalToConstant: 90)
         ])
         panel.contentView = content
-        applyTheme(fieldBox: fieldBox)
+        applyTheme()
+        // Окно должно перекрашиваться вместе со всем остальным, а не
+        // оставаться в цветах той темы, при которой было создано.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(themeChanged),
+            name: .fpThemeDidChange,
+            object: nil
+        )
     }
 
-    private func applyTheme(fieldBox: FPLayerView) {
+    @objc private func themeChanged() {
+        applyTheme()
+    }
+
+    private func applyTheme() {
         let opacity = min(max(FPStyle.pane.alphaComponent, 0), 1)
-        let gradientOpacity = min(0.85, 0.62 + opacity * 0.25)
+        // Те же значения, что у окна проводника: градиент читается тоном
+        // поверх тёмной основы, а не заливает окно целиком.
+        let gradientOpacity = min(0.75, 0.50 + opacity * 0.25)
+        base.setColor(FPStyle.window.withAlphaComponent(0.92))
         gradient.setColors(
             FPStyle.gradientEnabled
                 ? [
@@ -152,16 +175,20 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
         field.textColor = FPStyle.text
         fieldBox.layer?.backgroundColor = FPStyle.control.cgColor
         fieldBox.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.9).cgColor
-        confirmButton.layer?.backgroundColor = FPStyle.orange.withAlphaComponent(0.92).cgColor
-        confirmButton.contentTintColor = .black
+        // Главная кнопка в акцентном цвете темы, а не в оранжевом: акцент —
+        // это то, чем окрашены действия во всём приложении.
+        confirmButton.layer?.backgroundColor = FPStyle.accent.cgColor
+        confirmButton.layer?.borderWidth = 0
         confirmButton.attributedTitle = NSAttributedString(
             string: "Переименовать",
             attributes: [
                 .font: FPStyle.headingFont(ofSize: 12.5, weight: .semibold),
-                .foregroundColor: NSColor.black.withAlphaComponent(0.85)
+                .foregroundColor: NSColor.black.withAlphaComponent(0.88)
             ]
         )
         cancelButton.layer?.backgroundColor = FPStyle.control.cgColor
+        cancelButton.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.8).cgColor
+        cancelButton.layer?.borderWidth = 1
         cancelButton.attributedTitle = NSAttributedString(
             string: "Отмена",
             attributes: [
@@ -173,6 +200,7 @@ final class FPRenameSheet: NSObject, NSTextFieldDelegate {
 
     /// Показывает окно как лист над проводником.
     func present(name: String, over window: NSWindow, completion: @escaping (String?) -> Void) {
+        applyTheme()
         self.completion = completion
         originalName = name
         currentName.stringValue = name
