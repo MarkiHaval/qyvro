@@ -3797,14 +3797,15 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let urls = selectedItems.map(\.url)
         guard !urls.isEmpty else { return }
 
-        let alert = NSAlert()
-        alert.messageText = urls.count == 1 ? "Переместить объект в корзину?" : "Переместить \(urls.count) объектов в корзину?"
-        alert.informativeText = "Будет использована системная корзина macOS. Безвозвратно ничего не удаляется."
-        alert.addButton(withTitle: "В корзину")
-        alert.addButton(withTitle: "Отмена")
-        alert.alertStyle = .warning
-
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // Подтверждения нет намеренно: файлы уходят в системную корзину, а не
+        // стираются, и любое удаление отменяется через историю операций. При
+        // разборе пачки диалог на каждый файл был бы главным тормозом — в
+        // просмотрщике удаление и так мгновенное, сетка должна вести себя так
+        // же.
+        FPActionLog.action(
+            "в корзину: \(urls.count) объектов",
+            urls.count == 1 ? urls[0].lastPathComponent : ""
+        )
 
         var errors: [String] = []
         var trashedRecords: [QyvroTrashRecord] = []
