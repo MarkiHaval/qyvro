@@ -437,13 +437,29 @@ private extension NSImage {
 
 private final class QyvroClipboardGlassView: NSVisualEffectView {
     var tint = FPStyle.pane {
-        didSet { needsDisplay = true }
+        didSet { applyTint() }
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        tint.setFill()
-        dirtyRect.fill()
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        applyTint()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        applyTint()
+    }
+
+    /// Тон задаётся цветом слоя, а не рисованием в `draw(_:)`.
+    ///
+    /// Размытие `NSVisualEffectView` рисует система прямо в слое, и заливка
+    /// поверх него до экрана не доходила — тон не применялся вообще. Окно
+    /// показывало голое размытие, сквозь которое просвечивали обои рабочего
+    /// стола и красили буфер в их цвет.
+    private func applyTint() {
+        layer?.backgroundColor = tint.cgColor
     }
 }
 
@@ -938,15 +954,11 @@ private final class QyvroClipboardViewController:
     }
 
     private func applyTheme() {
-        rootGlass?.tint = FPStyle.window.withAlphaComponent(
-            FPStyle.isCyberEditorial ? 0.88 : 0.96
-        )
-        sidebarGlass?.tint = FPStyle.sidebar.withAlphaComponent(
-            FPStyle.isCyberEditorial ? 0.84 : 0.96
-        )
-        contentGlass?.tint = FPStyle.pane.withAlphaComponent(
-            FPStyle.isCyberEditorial ? 0.82 : 0.96
-        )
+        // Плотность задаётся здесь одним местом: раньше те же значения
+        // дублировались при создании окна и расходились между собой.
+        rootGlass?.tint = FPStyle.window.withAlphaComponent(0.94)
+        sidebarGlass?.tint = FPStyle.sidebar.withAlphaComponent(0.94)
+        contentGlass?.tint = FPStyle.pane.withAlphaComponent(0.92)
         editorialBackdrop?.refreshTheme()
         brandLabel?.textColor = FPStyle.isCyberEditorial ? FPStyle.accent : FPStyle.orange
         headingLabel?.textColor = FPStyle.text
