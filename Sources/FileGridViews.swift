@@ -601,6 +601,8 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     private let kindField = NSTextField(labelWithString: "")
     /// Звёздочка «отобрано» в углу миниатюры.
     private let flagBadge = FPSelectedFlagBadge()
+    /// Папка ли в этой плитке: у папок отметки нет.
+    private var representsDirectory = false
     private let versionBadge = FPVersionCountBadge()
     private var previewWidthConstraint: NSLayoutConstraint!
     private var previewHeightConstraint: NSLayoutConstraint!
@@ -722,6 +724,13 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     /// Отмеченные файлы носят звёздочку всегда, остальные показывают её
     /// только под курсором: иначе сетка рябит от значков на каждой плитке.
     private func updateFlagBadgeVisibility() {
+        // Папки не отбирают: отметка нужна для кадров, которые идут в работу.
+        // Значок на папке только сбивал с толку — нажатие на него ничего не
+        // делало.
+        guard !representsDirectory else {
+            flagBadge.isHidden = true
+            return
+        }
         flagBadge.isHidden = !(flagBadge.isFlagged || isHoveredState)
     }
 
@@ -890,7 +899,10 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         versionCount: Int = 0,
         flagLevel: FPFinderTagStore.FlagLevel? = nil
     ) {
-        flagBadge.level = flagLevel ?? FPFinderTagStore.flagLevel(item.finderTags ?? [])
+        representsDirectory = item.isDirectory
+        flagBadge.level = item.isDirectory
+            ? .none
+            : (flagLevel ?? FPFinderTagStore.flagLevel(item.finderTags ?? []))
         versionBadge.count = versionCount
         versionBadge.isHidden = versionCount < 2
         let path = item.url.standardizedFileURL.path

@@ -92,8 +92,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             ?? windowControllers.last(where: { $0.window?.isVisible == true })
             ?? windowControllers.last(where: { $0.window?.isMiniaturized == true })
             ?? windowControllers.last
-        guard let controller, let window = controller.window else {
+        // Если живых окон не осталось — например, последнее закрыли крестиком —
+        // вызов обязан открыть новое, иначе приложение работает без единого
+        // окна и кажется зависшим.
+        guard let controller,
+              let window = controller.window,
+              windowControllers.contains(where: { $0.window != nil }) else {
             createWindow(session: nil)
+            NSApp.unhide(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
@@ -113,6 +119,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         if window.isMiniaturized {
             window.deminiaturize(nil)
         }
+        // Снятие скрытия обязательно и отдельно: `activate` спрятанное
+        // приложение не разворачивает. Без этого вызова повторное нажатие
+        // работало в одну сторону — спрятать могло, показать нет, и окно
+        // выглядело пропавшим насовсем.
+        NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
         // Окно поднимается над всеми, включая чужие приложения: смысл вызова
         // в том, чтобы проводник оказался перед глазами сразу, а не встал
