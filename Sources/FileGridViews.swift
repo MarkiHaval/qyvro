@@ -360,10 +360,12 @@ final class FileGridScrollView: NSScrollView, NSDraggingSource {
         return urls.enumerated().map { offset, url in
             let item = NSDraggingItem(pasteboardWriter: url as NSURL)
             guard offset < visibleStackLimit else {
-                // Нулевой кадр без содержимого: файл переносится, но ничего
-                // не рисует и не стоит ни кадра отрисовки.
+                // Кадр обязан быть настоящим: с нулевым размером AppKit
+                // отбрасывал перетаскивание целиком, и не переносилось ничего.
+                // Скрытые элементы получают ту же рамку, что и первый, но без
+                // изображения — груз идёт, рисунка нет.
                 item.setDraggingFrame(
-                    NSRect(x: localPoint.x, y: localPoint.y, width: 0, height: 0),
+                    NSRect(x: localPoint.x - 24, y: localPoint.y - 24, width: 48, height: 48),
                     contents: nil
                 )
                 return item
@@ -816,10 +818,7 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         let draggingItems = urls.enumerated().map { offset, url -> NSDraggingItem in
             let item = NSDraggingItem(pasteboardWriter: url as NSURL)
             guard offset < visibleStackLimit else {
-                item.setDraggingFrame(
-                    NSRect(origin: previewImageView.frame.origin, size: .zero),
-                    contents: nil
-                )
+                item.setDraggingFrame(previewImageView.frame, contents: nil)
                 return item
             }
             let frame = previewImageView.frame.offsetBy(dx: CGFloat(offset) * 4, dy: -CGFloat(offset) * 4)
