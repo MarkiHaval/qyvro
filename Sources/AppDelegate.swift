@@ -83,6 +83,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             self?.toggleClipboardFromGlobalShortcut()
         }
         GlobalHotKeyCenter.shared.setEnabled(FPPreferences.summonHotKeyEnabled)
+        verifyWindowAppeared()
+    }
+
+    /// Страховка на случай, если после запуска окно так и не появилось.
+    ///
+    /// Восстановление сессии иногда оставляло приложение вовсе без окон:
+    /// процесс живой, значок в Доке есть, а показать нечего. Воспроизводится
+    /// не всегда — похоже на гонку при развёртывании окна, — поэтому вместо
+    /// поиска единственной причины проверяется результат. Если окна нет,
+    /// открывается новое: пустой запуск для файлового менеджера бесполезен в
+    /// любом случае.
+    private func verifyWindowAppeared() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in
+            guard let self else { return }
+            let hasUsableWindow = self.windowControllers.contains { controller in
+                guard let window = controller.window else { return false }
+                return window.isVisible || window.isMiniaturized
+            }
+            guard !hasUsableWindow else { return }
+            FPActionLog.action("после запуска окна не оказалось — открываю новое")
+            self.createWindow(session: nil)
+            NSApp.unhide(nil)
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     // ⌘E из любого приложения: существующее окно Qyvro переезжает на текущий
