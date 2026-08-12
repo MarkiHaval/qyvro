@@ -348,8 +348,26 @@ final class FileGridScrollView: NSScrollView, NSDraggingSource {
         let localPoint = convert(windowPoint, from: nil)
         let image = onDragImageFromDocument?(documentPoint)
 
-        return urls.prefix(12).enumerated().map { offset, url in
+        // Элемент перетаскивания несёт сам файл, а не только картинку под
+        // курсором. Прежде список обрезался до двенадцати ради вида стопки —
+        // и вместе с картинками обрезался перенос: сколько ни выдели,
+        // уходило двенадцать файлов.
+        //
+        // Теперь элементы создаются для всех выбранных файлов, а изображение
+        // получают только первые: рисовать стопку из тридцати иконок незачем,
+        // они всё равно лягут друг на друга.
+        let visibleStackLimit = 12
+        return urls.enumerated().map { offset, url in
             let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+            guard offset < visibleStackLimit else {
+                // Нулевой кадр без содержимого: файл переносится, но ничего
+                // не рисует и не стоит ни кадра отрисовки.
+                item.setDraggingFrame(
+                    NSRect(x: localPoint.x, y: localPoint.y, width: 0, height: 0),
+                    contents: nil
+                )
+                return item
+            }
             let dragImage = image ?? NSWorkspace.shared.icon(forFile: url.path)
             dragImage.size = NSSize(width: 48, height: 48)
             let delta = CGFloat(offset) * 2
@@ -791,8 +809,19 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         let urls = FPUploadPrep.prepareIfRequested(selected, event: event)
 
         let dragImage = previewImageView.image ?? NSWorkspace.shared.icon(forFile: urls[0].path)
+        // Переносятся все выбранные файлы, а рисуются только первые: стопка из
+        // трёх десятков иконок уехала бы длинной диагональю и ничего бы не
+        // сообщила.
+        let visibleStackLimit = 12
         let draggingItems = urls.enumerated().map { offset, url -> NSDraggingItem in
             let item = NSDraggingItem(pasteboardWriter: url as NSURL)
+            guard offset < visibleStackLimit else {
+                item.setDraggingFrame(
+                    NSRect(origin: previewImageView.frame.origin, size: .zero),
+                    contents: nil
+                )
+                return item
+            }
             let frame = previewImageView.frame.offsetBy(dx: CGFloat(offset) * 4, dy: -CGFloat(offset) * 4)
             item.setDraggingFrame(frame, contents: dragImage)
             return item
