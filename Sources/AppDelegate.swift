@@ -113,6 +113,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
            window.isKeyWindow {
             FPActionLog.action("проводник свёрнут повторным вызовом")
             window.level = .normal
+            // Окно именно убирается с экрана, а не просто прячется вместе с
+            // приложением. Скрытие снимается любой активацией — например
+            // показом буфера по ⇧⌘V, — и тогда проводник всплывал рядом,
+            // хотя его не звали. Убранное окно возвращается только явным
+            // вызовом.
+            window.orderOut(nil)
             NSApp.hide(nil)
             return
         }

@@ -325,12 +325,12 @@ private final class QyvroClipboardWatcher {
 
     func start() {
         guard timer == nil else { return }
-        // Пока окно не на переднем плане, опрашивать буфер незачем: человек
-        // копирует в другом приложении, и содержимое всё равно подхватится,
-        // как только он вернётся. Прежний опрос дважды в секунду круглые
-        // сутки заметно ел батарею.
+        // Опрос идёт всегда, в том числе когда Qyvro в фоне: история буфера
+        // ровно для того и нужна, чтобы ловить копирование в других
+        // программах. Пропуск неактивного состояния терял всё, что человек
+        // копировал в браузере или редакторе, — оставалась только последняя
+        // запись, подхваченная при возврате в проводник.
         timer = Timer.scheduledTimer(withTimeInterval: 0.55, repeats: true) { [weak self] _ in
-            guard NSApp.isActive else { return }
             self?.tick()
         }
     }
@@ -368,7 +368,6 @@ private final class QyvroScreenshotWatcher {
         guard timer == nil else { return }
         startedAt = Date().addingTimeInterval(-1)
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard NSApp.isActive else { return }
             self?.tick()
         }
     }
