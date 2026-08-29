@@ -14,13 +14,21 @@ import Quartz
 final class FPPreviewPane: NSView {
     private let previewContainer = NSView()
     private var previewView: QLPreviewView?
-    /// Видео показывается родным плеером, а не через Quick Look.
+    /// Видео и аудио показываются своим плеером, а не через Quick Look.
     ///
     /// У Quick Look внутри чужого окна панель воспроизведения пряталась по
     /// таймауту и не возвращалась при наведении: он не получал событий о
-    /// движении мыши, а повлиять на это снаружи нельзя. Свой плеер даёт
-    /// плавающие элементы управления, которыми управляем мы.
-    private var playerView: AVPlayerView?
+    /// движении мыши, а повлиять на это снаружи нельзя. AVPlayerView эту
+    /// проблему решал, но заводил свою: на любом controlsStyle подложка под
+    /// его элементами управления гасла при наведении мышью на кадр, и
+    /// публичного способа это выключить не нашлось. Голый AVPlayerLayer
+    /// (см. FPPlayerLayerView) не приносит с собой вообще никакого чужого
+    /// UI — кнопки и прогресс рисуем сами, см. FPMediaTransportBar.
+    private var playerLayerView: FPPlayerLayerView?
+    private var transportBar: FPMediaTransportBar?
+    private static let audioExtensions: Set<String> = [
+        "mp3", "wav", "aiff", "aif", "m4a", "flac", "aac"
+    ]
     private static let cacheLimit = 4
     private var cache: [(url: URL, view: QLPreviewView)] = []
     private var previousURL: URL?
@@ -132,9 +140,12 @@ final class FPPreviewPane: NSView {
         }
         previewView = nil
         previousURL = url
-        playerView?.player?.pause()
-        playerView?.removeFromSuperview()
-        playerView = nil
+        transportBar?.detach()
+        playerLayerView?.player?.pause()
+        playerLayerView?.removeFromSuperview()
+        playerLayerView = nil
+        transportBar?.removeFromSuperview()
+        transportBar = nil
 
         guard let url else {
             nameText = ""
@@ -143,24 +154,36 @@ final class FPPreviewPane: NSView {
             return
         }
 
-        if FPMediaInfoCache.movieExtensions.contains(url.pathExtension.lowercased()) {
-            // Видео идёт мимо Quick Look: свой плеер сам рисует плавающие
-            // элементы управления и не зависит от того, доходят ли до него
-            // события мыши через чужое окно.
-            let player = AVPlayerView(frame: previewContainer.bounds)
-            player.translatesAutoresizingMaskIntoConstraints = false
-            player.controlsStyle = .floating
-            player.showsFullScreenToggleButton = false
-            player.videoGravity = .resizeAspect
-            player.player = AVPlayer(url: url)
-            previewContainer.addSubview(player)
+        let ext = url.pathExtension.lowercased()
+        if FPMediaInfoCache.movieExtensions.contains(ext) || Self.audioExtensions.contains(ext) {
+            // Видео и аудио идут мимо Quick Look и мимо AVPlayerView — см.
+            // комментарий у playerLayerView. Строка управления — отдельная
+            // полоса под кадром, а не поверх него.
+            let layerView = FPPlayerLayerView(frame: previewContainer.bounds)
+            layerView.translatesAutoresizingMaskIntoConstraints = false
+            let bar = FPMediaTransportBar(frame: .zero)
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            let avPlayer = AVPlayer(url: url)
+            layerView.player = avPlayer
+            previewContainer.addSubview(layerView)
+            previewContainer.addSubview(bar)
             NSLayoutConstraint.activate([
-                player.topAnchor.constraint(equalTo: previewContainer.topAnchor),
-                player.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
-                player.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
-                player.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor)
+                layerView.topAnchor.constraint(equalTo: previewContainer.topAnchor),
+                layerView.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
+                layerView.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
+                layerView.bottomAnchor.constraint(equalTo: bar.topAnchor),
+
+                bar.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
+                bar.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
+                bar.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor),
+                bar.heightAnchor.constraint(equalToConstant: 40)
             ])
-            playerView = player
+            playerLayerView = layerView
+            transportBar = bar
+            bar.attach(to: avPlayer)
+            // Открыл превью — значит хочет посмотреть/послушать, а не сперва
+            // прицелиться в кнопку play.
+            avPlayer.play()
             nameText = url.lastPathComponent
             refreshFlag()
             refreshDetail(for: url)
@@ -190,11 +213,6 @@ final class FPPreviewPane: NSView {
         refreshDetail(for: url)
     }
 
-    /// Показ и скрытие элементов управления оставлены самому плееру.
-    ///
-    /// Ручное переключение стиля прятало панель, но оставляло на кадре
-    /// размытую плашку-подложку: она рисуется отдельно и не убирается вместе
-    /// с кнопками. Родное поведение AVPlayerView прячет и то и другое.
     func refreshFlag() {
         guard let url else { return }
         flagBadge.isHidden = false
@@ -227,10 +245,29 @@ final class FPPreviewPane: NSView {
         }
     }
 
+    /// Пауза/воспроизведение по клавише — для панелей без видео или аудио
+    /// (картинка, PDF, текст) это просто ничего не делает.
+    func togglePlayback() {
+        guard let player = playerLayerView?.player else { return }
+        if player.timeControlStatus == .playing {
+            player.pause()
+        } else {
+            player.play()
+        }
+        transportBar?.refreshPlayPauseIcon()
+    }
+
+    func toggleMute() {
+        transportBar?.toggleMute()
+    }
+
     func teardown() {
-        playerView?.player?.pause()
-        playerView?.removeFromSuperview()
-        playerView = nil
+        transportBar?.detach()
+        playerLayerView?.player?.pause()
+        playerLayerView?.removeFromSuperview()
+        playerLayerView = nil
+        transportBar?.removeFromSuperview()
+        transportBar = nil
         previewView?.close()
         previewView?.removeFromSuperview()
         previewView = nil
@@ -238,6 +275,243 @@ final class FPPreviewPane: NSView {
         cache.removeAll()
         previousURL = nil
         url = nil
+    }
+}
+
+/// Голый видеослой без какого-либо чужого UI поверх.
+///
+/// `makeBackingLayer()` подставляет `AVPlayerLayer` вместо обычного слоя —
+/// это штатный способ AppKit сделать вид хостом для чужого `CALayer`, без
+/// ручной возни с порядком `wantsLayer`/`layer`. Кнопки и прогресс рисует
+/// `FPMediaTransportBar` отдельно, этот вид только показывает картинку.
+final class FPPlayerLayerView: NSView {
+    private var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        playerLayer.videoGravity = .resizeAspect
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func makeBackingLayer() -> CALayer { AVPlayerLayer() }
+
+    var player: AVPlayer? {
+        get { playerLayer.player }
+        set { playerLayer.player = newValue }
+    }
+}
+
+/// Своя строка воспроизведения: кнопка паузы, бегунок, время.
+///
+/// AVPlayerView гасила подложку под своими кнопками при наведении мышью на
+/// кадр — на `.floating`, и на `.inline` тоже, и публичного способа это
+/// выключить не нашлось. Здесь чужого UI нет вообще, поэтому и тушить
+/// нечему.
+final class FPMediaTransportBar: NSView {
+    private let playPauseButton = NSButton()
+    private let currentTimeLabel = NSTextField(labelWithString: "00:00")
+    private let durationLabel = NSTextField(labelWithString: "00:00")
+    private let scrubber = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let muteButton = NSButton()
+    private let volumeSlider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
+
+    private weak var player: AVPlayer?
+    private var timeObserver: Any?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        buildLayout()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func buildLayout() {
+        let background = FPLayerView(color: FPStyle.control)
+        background.translatesAutoresizingMaskIntoConstraints = false
+
+        playPauseButton.isBordered = false
+        playPauseButton.bezelStyle = .inline
+        playPauseButton.imagePosition = .imageOnly
+        playPauseButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Воспроизвести")
+        playPauseButton.contentTintColor = FPStyle.text
+        playPauseButton.target = self
+        playPauseButton.action = #selector(togglePlayPause)
+        playPauseButton.translatesAutoresizingMaskIntoConstraints = false
+
+        for label in [currentTimeLabel, durationLabel] {
+            label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+            label.textColor = FPStyle.dimText
+            label.alignment = .center
+            label.translatesAutoresizingMaskIntoConstraints = false
+        }
+
+        scrubber.isContinuous = true
+        if #available(macOS 10.12.2, *) {
+            scrubber.trackFillColor = FPStyle.accent
+        }
+        scrubber.target = self
+        scrubber.action = #selector(scrub)
+        scrubber.translatesAutoresizingMaskIntoConstraints = false
+
+        muteButton.isBordered = false
+        muteButton.bezelStyle = .inline
+        muteButton.imagePosition = .imageOnly
+        muteButton.image = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: "Звук")
+        muteButton.contentTintColor = FPStyle.text
+        muteButton.target = self
+        muteButton.action = #selector(toggleMute)
+        muteButton.translatesAutoresizingMaskIntoConstraints = false
+
+        volumeSlider.isContinuous = true
+        if #available(macOS 10.12.2, *) {
+            volumeSlider.trackFillColor = FPStyle.accent
+        }
+        volumeSlider.target = self
+        volumeSlider.action = #selector(volumeChanged)
+        volumeSlider.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(background)
+        addSubview(playPauseButton)
+        addSubview(currentTimeLabel)
+        addSubview(scrubber)
+        addSubview(durationLabel)
+        addSubview(muteButton)
+        addSubview(volumeSlider)
+
+        NSLayoutConstraint.activate([
+            background.topAnchor.constraint(equalTo: topAnchor),
+            background.leadingAnchor.constraint(equalTo: leadingAnchor),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor),
+            background.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            playPauseButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            playPauseButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            playPauseButton.widthAnchor.constraint(equalToConstant: 26),
+            playPauseButton.heightAnchor.constraint(equalToConstant: 26),
+
+            currentTimeLabel.leadingAnchor.constraint(equalTo: playPauseButton.trailingAnchor, constant: 10),
+            currentTimeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            currentTimeLabel.widthAnchor.constraint(equalToConstant: 40),
+
+            scrubber.leadingAnchor.constraint(equalTo: currentTimeLabel.trailingAnchor, constant: 8),
+            scrubber.trailingAnchor.constraint(equalTo: durationLabel.leadingAnchor, constant: -8),
+            scrubber.centerYAnchor.constraint(equalTo: centerYAnchor),
+
+            durationLabel.trailingAnchor.constraint(equalTo: muteButton.leadingAnchor, constant: -12),
+            durationLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
+            durationLabel.widthAnchor.constraint(equalToConstant: 40),
+
+            muteButton.trailingAnchor.constraint(equalTo: volumeSlider.leadingAnchor, constant: -6),
+            muteButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            muteButton.widthAnchor.constraint(equalToConstant: 18),
+            muteButton.heightAnchor.constraint(equalToConstant: 18),
+
+            volumeSlider.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            volumeSlider.centerYAnchor.constraint(equalTo: centerYAnchor),
+            volumeSlider.widthAnchor.constraint(equalToConstant: 64)
+        ])
+    }
+
+    func attach(to player: AVPlayer) {
+        detach()
+        self.player = player
+        player.volume = FPPreferences.previewVolume
+        player.isMuted = FPPreferences.previewMuted
+        volumeSlider.doubleValue = Double(player.volume)
+        refreshPlayPauseIcon()
+        refreshMuteIcon()
+        timeObserver = player.addPeriodicTimeObserver(
+            forInterval: CMTime(seconds: 0.25, preferredTimescale: 600),
+            queue: .main
+        ) { [weak self] time in
+            self?.tick(time: time)
+        }
+    }
+
+    func detach() {
+        if let timeObserver, let player {
+            player.removeTimeObserver(timeObserver)
+        }
+        timeObserver = nil
+        player = nil
+    }
+
+    func refreshPlayPauseIcon() {
+        let isPlaying = player?.timeControlStatus == .playing
+        playPauseButton.image = NSImage(
+            systemSymbolName: isPlaying ? "pause.fill" : "play.fill",
+            accessibilityDescription: isPlaying ? "Пауза" : "Воспроизвести"
+        )
+    }
+
+    private func tick(time: CMTime) {
+        refreshPlayPauseIcon()
+        let duration = player?.currentItem?.duration.seconds ?? 0
+        if duration.isFinite, duration > 0 {
+            scrubber.maxValue = duration
+            durationLabel.stringValue = Self.format(duration)
+        }
+        let current = time.seconds
+        guard current.isFinite else { return }
+        scrubber.doubleValue = current
+        currentTimeLabel.stringValue = Self.format(current)
+    }
+
+    @objc private func togglePlayPause() {
+        guard let player else { return }
+        if player.timeControlStatus == .playing {
+            player.pause()
+        } else {
+            player.play()
+        }
+        refreshPlayPauseIcon()
+    }
+
+    @objc private func scrub() {
+        guard let player else { return }
+        let target = CMTime(seconds: scrubber.doubleValue, preferredTimescale: 600)
+        player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+        currentTimeLabel.stringValue = Self.format(scrubber.doubleValue)
+    }
+
+    func refreshMuteIcon() {
+        let isMuted = player?.isMuted ?? false
+        muteButton.image = NSImage(
+            systemSymbolName: isMuted ? "speaker.slash.fill" : "speaker.wave.2.fill",
+            accessibilityDescription: isMuted ? "Включить звук" : "Выключить звук"
+        )
+    }
+
+    /// Тоже общий на все файлы, как и громкость: включил без звука — так и
+    /// останется, пока не включишь обратно сам.
+    @objc func toggleMute() {
+        guard let player else { return }
+        player.isMuted.toggle()
+        UserDefaults.standard.set(player.isMuted, forKey: "PreviewMuted")
+        refreshMuteIcon()
+    }
+
+    /// Громкость общая на все файлы: подвинул один раз — следующий
+    /// предпросмотр открывается с тем же уровнем, а не снова со ста
+    /// процентов.
+    @objc private func volumeChanged() {
+        guard let player else { return }
+        let value = Float(volumeSlider.doubleValue)
+        player.volume = value
+        UserDefaults.standard.set(value, forKey: "PreviewVolume")
+        // Двигать ползунок при заглушённом звуке и не слышать разницы —
+        // так и не поймёшь, почему звука всё ещё нет.
+        if player.isMuted, value > 0 {
+            toggleMute()
+        }
+    }
+
+    private static func format(_ seconds: Double) -> String {
+        let total = max(0, Int(seconds.rounded()))
+        return String(format: "%02d:%02d", total / 60, total % 60)
     }
 }
 
@@ -365,6 +639,8 @@ final class FPPreviewContentView: NSView {
     private static func hintText() -> NSAttributedString {
         let pairs = [
             ("← →", "листать"),
+            ("S", "пауза"),
+            ("M", "звук"),
             ("F", "отметить"),
             ("⌫", "в корзину"),
             ("C", "сравнение"),
@@ -537,11 +813,12 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = FPStyle.gradientEnd
         window.isOpaque = false
         window.backgroundColor = .clear
-        // Quick Look показывает элементы управления видео, пока видит движение
-        // мыши внутри себя, и прячет их по таймауту. Окно обязано явно
-        // запросить доставку этих событий: без запроса панель воспроизведения
-        // пряталась и не возвращалась при наведении.
-        window.acceptsMouseMovedEvents = true
+        // Раньше здесь стоял acceptsMouseMovedEvents = true — Quick Look так
+        // держал панель воспроизведения видео живой при наведении. Тот путь
+        // давно не используется: видео и аудио показывает свой плеер (см.
+        // FPPlayerLayerView), а не Quick Look, так что флаг остался мёртвым
+        // грузом. Ни картинкам, ни PDF, ни тексту через QLPreviewView он
+        // тоже не нужен.
         window.minSize = NSSize(width: 520, height: 420)
         // Жёсткий потолок размера. Кадры в 5504 точки шириной раз за разом
         // утягивали окно за границы экрана; ограничение сверху не даёт этому
@@ -756,6 +1033,16 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         onNeedsRefresh?()
     }
 
+    private func togglePlayback() {
+        guard contentView.panes.indices.contains(focusedPane) else { return }
+        contentView.panes[focusedPane].togglePlayback()
+    }
+
+    private func toggleMute() {
+        guard contentView.panes.indices.contains(focusedPane) else { return }
+        contentView.panes[focusedPane].toggleMute()
+    }
+
     private func trashFocused() {
         guard let url = focusedURL else {
             NSSound.beep()
@@ -920,6 +1207,8 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         case 53, 49: close()                          // Esc, пробел
         case 51: trashFocused()                       // ⌫
         case 3: focusedURL.map(toggleFlag)            // F
+        case 1: togglePlayback()                      // S — пауза/воспроизведение
+        case 46: toggleMute()                         // M — звук
         case 8: cyclePaneCount()                      // C
         case 9: toggleCurtain()                       // V — шторка
         case 17: toggleMaximized()                    // T — на весь экран

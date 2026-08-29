@@ -919,6 +919,18 @@ enum FPPreferences {
         UserDefaults.standard.bool(forKey: "CollapseFileVersions")
     }
 
+    /// Громкость предпросмотра, 0...1. Общая для всех файлов и панелей —
+    /// какую выставил в прошлый раз, с такой открывается следующий.
+    static var previewVolume: Float {
+        guard UserDefaults.standard.object(forKey: "PreviewVolume") != nil else { return 1.0 }
+        return min(max(UserDefaults.standard.float(forKey: "PreviewVolume"), 0), 1)
+    }
+
+    /// Заглушён ли звук предпросмотра — сохраняется вместе с громкостью.
+    static var previewMuted: Bool {
+        UserDefaults.standard.bool(forKey: "PreviewMuted")
+    }
+
     static var swipeThreshold: CGFloat {
         CGFloat(190 - swipeSensitivity * 1.45)
     }
