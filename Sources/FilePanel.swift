@@ -81,7 +81,6 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     private let viewScaleButton = HoverButton()
     private let sortButton = SortPillButton()
     private let filterButton = SortPillButton()
-    private let diskRing = FPDiskUsageRing()
     private var gridFilter: FPGridFilter = .all
     private let swipeIndicator = SwipeNavigationIndicator(frame: NSRect(x: 0, y: 0, width: 66, height: 68))
     private let swipeWaveOverlay = SwipeSurfaceWaveView()
@@ -620,47 +619,6 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         updateViewModeVisibility()
     }
 
-    private func modeButtonStrip() -> NSView {
-        let container = FPLayerView(color: FPStyle.control, cornerRadius: 10, borderColor: FPStyle.stroke, borderWidth: 0.5)
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = 2
-        stack.edgeInsets = NSEdgeInsets(top: 2, left: 2, bottom: 2, right: 2)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-
-        modeButtons = [
-            modeButton(title: "Список", tag: ExplorerViewMode.list.rawValue),
-            modeButton(title: "Мелко", tag: ExplorerViewMode.smallIcons.rawValue),
-            modeButton(title: "Крупно", tag: ExplorerViewMode.largeIcons.rawValue)
-        ]
-        modeButtons.forEach { stack.addArrangedSubview($0) }
-        container.addSubview(stack)
-
-        NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(equalToConstant: 176),
-            container.heightAnchor.constraint(equalToConstant: 32),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            stack.topAnchor.constraint(equalTo: container.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ])
-        updateModeButtons()
-        return container
-    }
-
-    private func modeButton(title: String, tag: Int) -> NSButton {
-        let button = NSButton(title: title, target: self, action: #selector(viewModeChanged(_:)))
-        button.tag = tag
-        button.isBordered = false
-        button.bezelStyle = .inline
-        button.font = .systemFont(ofSize: 12, weight: .semibold)
-        button.wantsLayer = true
-        button.layer?.cornerRadius = 8
-        button.widthAnchor.constraint(equalToConstant: 54).isActive = true
-        button.heightAnchor.constraint(equalToConstant: 24).isActive = true
-        return button
-    }
-
     private func updateModeButtons() {
         for button in modeButtons {
             let active = button.tag == viewMode.rawValue
@@ -692,20 +650,6 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         return viewScaleButton
     }
 
-    private func viewModeToggle() -> NSButton {
-        viewModeToggleButton.bezelStyle = .inline
-        viewModeToggleButton.isBordered = false
-        viewModeToggleButton.imagePosition = .imageOnly
-        viewModeToggleButton.contentTintColor = FPStyle.orange
-        viewModeToggleButton.target = self
-        viewModeToggleButton.action = #selector(toggleViewMode(_:))
-        viewModeToggleButton.translatesAutoresizingMaskIntoConstraints = false
-        viewModeToggleButton.widthAnchor.constraint(equalToConstant: 22).isActive = true
-        viewModeToggleButton.heightAnchor.constraint(equalToConstant: 22).isActive = true
-        updateViewModeToggleButton()
-        return viewModeToggleButton
-    }
-
     private func updateViewModeToggleButton() {
         let symbol = viewMode == .largeIcons ? "list.bullet" : "square.grid.2x2"
         let tooltip = viewMode == .largeIcons ? "Показать списком" : "Показать плиткой"
@@ -733,27 +677,6 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         sortButton.heightAnchor.constraint(equalToConstant: 26).isActive = true
         syncSortControl()
         return sortButton
-    }
-
-    /// Кольцо занятости диска. Разбивка по типам считается один раз за сеанс
-    /// и в фоне: обход индекса Spotlight занимает секунды.
-    private func diskRingControl() -> NSView {
-        diskRing.translatesAutoresizingMaskIntoConstraints = false
-        diskRing.widthAnchor.constraint(equalToConstant: 26).isActive = true
-        diskRing.heightAnchor.constraint(equalToConstant: 26).isActive = true
-        diskRing.onSegmentPicked = { [weak self] filter in
-            guard let self else { return }
-            FPActionLog.action("кольцо диска → \(filter.title)")
-            self.gridFilter = filter
-            self.syncFilterControl()
-            self.loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
-        }
-        FPDiskUsage.refreshCapacity()
-        diskRing.update(FPDiskUsage.snapshot)
-        FPDiskUsage.refreshBreakdown { [weak self] in
-            self?.diskRing.update(FPDiskUsage.snapshot)
-        }
-        return diskRing
     }
 
     private func filterMenuControl() -> NSView {
@@ -832,19 +755,6 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         gridFilter = option
         syncFilterControl()
         loadCurrentDirectory(asynchronously: true, preservingGridPosition: true)
-    }
-
-    private func sliderIcon(_ symbol: String) -> NSImageView {
-        let imageView = NSImageView()
-        if #available(macOS 11.0, *) {
-            imageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        }
-        imageView.contentTintColor = FPStyle.orange
-        imageView.imageScaling = .scaleProportionallyDown
-        imageView.translatesAutoresizingMaskIntoConstraints = false
-        imageView.widthAnchor.constraint(equalToConstant: 16).isActive = true
-        imageView.heightAnchor.constraint(equalToConstant: 16).isActive = true
-        return imageView
     }
 
     private func buildTable() {
@@ -1819,19 +1729,6 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         swipeVisualResetWorkItem?.cancel()
         swipeVisualResetWorkItem = nil
         pendingSwipeDeltaX = 0
-    }
-
-    private func resetSwipeVisuals() {
-        swipeVisualResetWorkItem = nil
-        guard !swipeEffectActive else { return }
-        pendingSwipeDeltaX = 0
-    }
-
-    private func scheduleSwipeVisualReset() {
-        swipeVisualResetWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.resetSwipeVisuals() }
-        swipeVisualResetWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.05, execute: work)
     }
 
     private func canNavigateHistory(from index: Int, goesBack: Bool) -> Bool {
@@ -3174,10 +3071,6 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
 
     func toggleViewModeFromCommand() {
         applyViewScale(viewMode == .largeIcons ? 18 : 58, reload: true)
-    }
-
-    @objc func iconSizeChanged(_ sender: Any?) {
-        viewScaleChanged(sender)
     }
 
     @objc private func showViewScalePopover(_ sender: NSButton) {
@@ -5082,43 +4975,6 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
 
     private func isVideoFile(_ url: URL) -> Bool {
         ["mp4", "mov", "m4v", "avi", "mkv", "webm"].contains(url.pathExtension.lowercased())
-    }
-
-    private func centerCroppedThumbnail(from source: NSImage, size: CGFloat) -> NSImage {
-        let target = NSSize(width: size, height: size)
-        let sourceSize = resolvedImageSize(source)
-        guard sourceSize.width > 0, sourceSize.height > 0 else {
-            source.size = target
-            return source
-        }
-
-        let scale = max(size / sourceSize.width, size / sourceSize.height)
-        let drawSize = NSSize(width: sourceSize.width * scale, height: sourceSize.height * scale)
-        let drawRect = NSRect(
-            x: (size - drawSize.width) / 2,
-            y: (size - drawSize.height) / 2,
-            width: drawSize.width,
-            height: drawSize.height
-        )
-
-        let output = NSImage(size: target)
-        output.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        let clip = NSBezierPath(roundedRect: NSRect(origin: .zero, size: target), xRadius: min(10, size * 0.12), yRadius: min(10, size * 0.12))
-        clip.addClip()
-        source.draw(in: drawRect, from: NSRect(origin: .zero, size: sourceSize), operation: .sourceOver, fraction: 1)
-        output.unlockFocus()
-        return output
-    }
-
-    private func resolvedImageSize(_ image: NSImage) -> NSSize {
-        if image.size.width > 0, image.size.height > 0 {
-            return image.size
-        }
-        if let representation = image.representations.first {
-            return NSSize(width: representation.pixelsWide, height: representation.pixelsHigh)
-        }
-        return .zero
     }
 
     private func folderColorOptions() -> [(title: String, key: String?)] {

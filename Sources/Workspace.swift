@@ -566,17 +566,6 @@ final class BrowserPane: NSView {
         workspace?.onSessionChanged?()
     }
 
-    func addExistingTab(_ panel: FilePanel, activate: Bool) {
-        configure(panel)
-        tabs.append(panel)
-        if activate {
-            activeIndex = tabs.count - 1
-        }
-        rebuildTabs()
-        showActivePanel()
-        workspace?.onSessionChanged?()
-    }
-
     private func configure(_ panel: FilePanel) {
         panel.onActivated = { [weak self] activePanel in
             guard let self else { return }
@@ -915,15 +904,6 @@ final class BrowserPane: NSView {
         rebuildTabs()
         showActivePanel()
         workspace?.onSessionChanged?()
-    }
-
-    @objc private func openTabInNewPane(_ sender: Any?) {
-        let url = activePanel?.currentURL ?? FileManager.default.homeDirectoryForCurrentUser
-        workspace?.addPane(with: url, after: self)
-    }
-
-    @objc private func closePane(_ sender: Any?) {
-        workspace?.removePane(self)
     }
 
     @objc func showCommandPalette(_ sender: Any?) {

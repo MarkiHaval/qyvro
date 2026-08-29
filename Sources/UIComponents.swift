@@ -1187,9 +1187,6 @@ final class SwipeNavigationIndicator: NSVisualEffectView {
     private let imageView = NSImageView()
     private let gradientLayer = CAGradientLayer()
     private var imageCenterConstraint: NSLayoutConstraint!
-    private var hideWorkItem: DispatchWorkItem?
-    private var acceptingUpdates = false
-    private var displayedProgress: CGFloat = 0
     private(set) var goesBack = true
     private(set) var progress: CGFloat = 0
 
@@ -1232,72 +1229,6 @@ final class SwipeNavigationIndicator: NSVisualEffectView {
     override func layout() {
         super.layout()
         gradientLayer.frame = bounds
-    }
-
-    func beginGesture() {
-        hideWorkItem?.cancel()
-        acceptingUpdates = true
-        displayedProgress = 0
-        isHidden = false
-        alphaValue = 0
-        scheduleAutoHide()
-    }
-
-    func update(goesBack: Bool, progress: CGFloat) {
-        guard acceptingUpdates else { return }
-        self.goesBack = goesBack
-        let target = min(max(progress, 0), 1)
-        displayedProgress += (target - displayedProgress) * 0.42
-        self.progress = displayedProgress
-        imageView.image = NSImage(
-            systemSymbolName: goesBack ? "chevron.left" : "chevron.right",
-            accessibilityDescription: goesBack ? "Назад" : "Вперёд"
-        )
-        imageView.image = imageView.image?.withSymbolConfiguration(.init(pointSize: 18, weight: .semibold))
-        imageCenterConstraint.constant = goesBack ? 14 : -14
-        isHidden = false
-        gradientLayer.colors = goesBack
-            ? [FPStyle.accent.withAlphaComponent(0.78).cgColor, FPStyle.orange.withAlphaComponent(0.88).cgColor]
-            : [FPStyle.orange.withAlphaComponent(0.88).cgColor, FPStyle.accent.withAlphaComponent(0.78).cgColor]
-        CATransaction.begin()
-        CATransaction.setAnimationDuration(0.09)
-        CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
-        layer?.opacity = Float(0.28 + self.progress * 0.70)
-        gradientLayer.opacity = Float(0.16 + self.progress * 0.34)
-        CATransaction.commit()
-        alphaValue = 1
-        layer?.backgroundColor = FPStyle.bar.blended(withFraction: self.progress * 0.18, of: FPStyle.accent)?.withAlphaComponent(0.78).cgColor
-        scheduleAutoHide()
-    }
-
-    func finish(committed: Bool) {
-        acceptingUpdates = false
-        hideWorkItem?.cancel()
-        hideWorkItem = nil
-        dismiss(duration: committed ? 0.22 : 0.16)
-    }
-
-    private func scheduleAutoHide() {
-        hideWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            self?.acceptingUpdates = false
-            self?.hideWorkItem = nil
-            self?.dismiss(duration: 0.18)
-        }
-        hideWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.92, execute: work)
-    }
-
-    private func dismiss(duration: TimeInterval) {
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = duration
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            animator().alphaValue = 0
-        } completionHandler: { [weak self] in
-            self?.isHidden = true
-            self?.progress = 0
-            self?.displayedProgress = 0
-        }
     }
 }
 
