@@ -11,3 +11,10 @@ Releases/Qyvro-macOS-Universal-*/
 build/
 .build/
 DerivedData/
+
+# Общий буфер: ключ, данные и логи сервера живут только на устройствах
+tools/clipsync/token.txt
+tools/clipsync/data/
+tools/clipsync/*.log
+tools/clipsync/.venv/
+cloud.json

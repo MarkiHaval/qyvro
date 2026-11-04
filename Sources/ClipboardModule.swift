@@ -340,6 +340,7 @@ private final class QyvroClipboardWatcher {
         guard pasteboard.changeCount != lastChange else { return }
         lastChange = pasteboard.changeCount
         store.addPasteboard(pasteboard)
+        QyvroCloudClipboardSync.shared.pasteboardChanged(pasteboard, changeCount: lastChange)
     }
 }
 
@@ -1102,6 +1103,7 @@ final class QyvroClipboardModule: NSObject, NSWindowDelegate {
         started = true
         clipboardWatcher.start()
         screenshotWatcher.start()
+        QyvroCloudClipboardSync.shared.start()
     }
 
     func show(activatePanel: Bool = true) {
