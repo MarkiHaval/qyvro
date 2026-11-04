@@ -53,6 +53,70 @@ def sniff(body):
     return "text", "text/plain; charset=utf-8"
 
 
+_RTF_SKIP = {
+    "fonttbl", "colortbl", "stylesheet", "info", "pict", "header", "footer",
+    "expandedcolortbl", "listtable", "listoverridetable", "generator", "themedata",
+    "colorschememapping", "datastore", "latentstyles", "xmlnstbl", "rsidtbl",
+}
+_RTF_CHARS = {"par": "\n", "line": "\n", "tab": "\t", "emdash": "\u2014", "endash": "\u2013",
+              "lquote": "\u2018", "rquote": "\u2019", "ldblquote": "\u201c",
+              "rdblquote": "\u201d", "bullet": "\u2022", "~": "\u00a0", "-": "", "_": "\u2011"}
+
+
+def rtf_to_text(rtf):
+    """Обычный текст из RTF: быстрая команда айфона шлёт форматированный текст как RTF."""
+    import re
+    out, stack = [], []
+    skip, uc, pending_skip = False, 1, 0
+    codepage = "cp1252"
+    m = re.search(r"\\ansicpg(\d+)", rtf)
+    if m:
+        codepage = "cp" + m.group(1)
+    token = re.compile(r"\\([a-zA-Z]+)(-?\d+)? ?|\\'([0-9a-fA-F]{2})|\\([^a-zA-Z])|([{}])|(\r\n|\r|\n)|([^\\{}\r\n]+)")
+    for word, arg, hexcode, sym, brace, newline, text in token.findall(rtf):
+        if brace == "{":
+            stack.append((skip, uc))
+        elif brace == "}":
+            if stack:
+                skip, uc = stack.pop()
+        elif newline:
+            continue
+        elif sym:
+            if sym == "*":
+                skip = True
+            elif sym in "\r\n" and not skip:
+                out.append("\n")
+            elif sym in _RTF_CHARS and not skip:
+                out.append(_RTF_CHARS[sym])
+            elif sym in "\\{}" and not skip:
+                out.append(sym)
+        elif word:
+            if word in _RTF_SKIP:
+                skip = True
+            elif word == "uc":
+                uc = int(arg or 1)
+            elif word == "u" and not skip:
+                n = int(arg)
+                out.append(chr(n + 65536 if n < 0 else n))
+                pending_skip = uc
+            elif word in _RTF_CHARS and not skip:
+                out.append(_RTF_CHARS[word])
+        elif hexcode:
+            if pending_skip:
+                pending_skip -= 1
+            elif not skip:
+                out.append(bytes([int(hexcode, 16)]).decode(codepage, "replace"))
+        elif text:
+            if pending_skip:
+                drop = min(pending_skip, len(text))
+                text, pending_skip = text[drop:], pending_skip - drop
+            if not skip:
+                out.append(text)
+    # Эмодзи в RTF идут парой суррогатов \uN\uN: склеиваем их обратно.
+    joined = "".join(out).encode("utf-16", "surrogatepass").decode("utf-16", "replace")
+    return joined.strip()
+
+
 # ---------------------------------------------------------------- сервер
 
 class State:
@@ -78,6 +142,9 @@ class State:
                 text = body.decode("utf-8")
             except UnicodeDecodeError:
                 raise ValueError("text must be utf-8")
+            if text.lstrip().startswith("{\\rtf"):
+                text = rtf_to_text(text)
+                body = text.encode("utf-8")
             if not text.strip():
                 raise ValueError("empty text")
         sha = hashlib.sha256(body).hexdigest()
@@ -155,10 +222,31 @@ class Handler(BaseHTTPRequestHandler):
     def _json(self, code, obj):
         self._send(code, json.dumps(obj).encode("utf-8"))
 
+    def _once(self, name):
+        # Временная раздача файла (например, быстрой команды для айфона):
+        # data/once/<длинный случайный код>/<файл>, живёт 30 минут.
+        if len(name) < 24 or not name.replace("-", "").replace("_", "").isalnum():
+            return self._json(404, {"error": "not found"})
+        folder = os.path.join(DATA_DIR, "once", name)
+        try:
+            files = os.listdir(folder)
+            fpath = os.path.join(folder, files[0])
+            if time.time() - os.path.getmtime(fpath) > 1800:
+                return self._json(410, {"error": "expired"})
+            with open(fpath, "rb") as f:
+                body = f.read()
+        except (OSError, IndexError):
+            return self._json(404, {"error": "not found"})
+        from urllib.parse import quote
+        return self._send(200, body, "application/octet-stream", {
+            "Content-Disposition": "attachment; filename*=UTF-8''" + quote(files[0])})
+
     def do_GET(self):
         path, q = self._route()
         if path == "/health":
             return self._send(200, b"ok", "text/plain")
+        if path.startswith("/once/"):
+            return self._once(path[len("/once/"):])
         if not self._authed():
             return self._json(401, {"error": "unauthorized"})
         state = self.server.state
