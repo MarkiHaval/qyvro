@@ -1,7 +1,7 @@
 """Общий буфер Qyvro: сервер (один последний элемент) и клиент буфера Windows.
 
     python qyvro_clip.py serve    # сервер на 127.0.0.1:27140, наружу через Tailscale Funnel /clip
-    python qyvro_clip.py client   # синхронизация буфера Windows с сервером
+    python qyvro_clip.py client   # буфер Windows: копирование уходит на сервер, Ctrl+Alt+V вставляет общий
 
 Ключ лежит в token.txt рядом со скриптом. Только стандартная библиотека,
 клиенту Windows для картинок нужен Pillow.
@@ -440,41 +440,64 @@ def client():
             user32.CloseClipboard()
         return True
 
-    def poller():
-        primed = False
-        while True:
+    # Вставка из общего буфера по Ctrl+Alt+V. Свой буфер не перетираем:
+    # кладём элемент с сервера, жмём Ctrl+V за человека, возвращаем прежнее.
+    MOD_ALT, MOD_CONTROL, MOD_NOREPEAT = 0x0001, 0x0002, 0x4000
+    VK_V, VK_SHIFT, VK_CONTROL, VK_MENU = 0x56, 0x10, 0x11, 0x12
+    WM_HOTKEY, KEYEVENTF_KEYUP = 0x0312, 0x0002
+    user32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
+    user32.RegisterHotKey.restype = wintypes.BOOL
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    user32.keybd_event.argtypes = [wintypes.BYTE, wintypes.BYTE, wintypes.DWORD, ctypes.c_size_t]
+    busy = threading.Event()
+
+    def paste_shared():
+        try:
+            code, body, headers = request("GET", "/data", timeout=20)
+            if code != 200 or not body:
+                return
+            kind = headers.get("X-Clip-Kind") or sniff(body)[0]
             try:
-                q = "/meta?wait=%d&since=%s" % (WAIT_MAX, st["id"] or "") if primed else "/meta"
-                _, raw, _ = request("GET", q, timeout=WAIT_MAX + 10)
-                meta = json.loads(raw or b"{}")
-                if not meta.get("id"):
-                    primed = True
-                    continue
-                with lock:
-                    new = meta["id"] != st["id"]
-                    st["id"] = meta["id"]
-                    if not primed:
-                        st["sha"] = meta["sha"]
-                        primed = True
-                        continue
-                    want = new and meta.get("source") != device and meta["sha"] != st["sha"]
-                if not want:
-                    continue
-                code, body, headers = request("GET", "/data", timeout=60)
-                if code != 200:
-                    continue
-                sha = headers.get("X-Clip-Sha") or hashlib.sha256(body).hexdigest()
+                saved = read_payload()
+            except Exception:
+                saved = None
+            with lock:
+                st["ignore_until"] = time.time() + 3.0
+                if not write_clipboard(kind, body):
+                    return
+            # Ctrl и Alt ещё зажаты: ждём, пока отпустят, иначе уйдёт Ctrl+Alt+V.
+            deadline = time.time() + 1.5
+            while time.time() < deadline and any(
+                    user32.GetAsyncKeyState(k) & 0x8000 for k in (VK_CONTROL, VK_MENU, VK_SHIFT)):
+                time.sleep(0.02)
+            user32.keybd_event(VK_CONTROL, 0, 0, 0)
+            user32.keybd_event(VK_V, 0, 0, 0)
+            user32.keybd_event(VK_V, 0, KEYEVENTF_KEYUP, 0)
+            user32.keybd_event(VK_CONTROL, 0, KEYEVENTF_KEYUP, 0)
+            time.sleep(0.6)
+            if saved:
                 with lock:
                     st["ignore_until"] = time.time() + 1.5
-                    if write_clipboard(meta["kind"], body):
-                        st["sha"] = sha
-                        st["ignore_until"] = time.time() + 1.0
-                        log.info("pulled %s %s from %s", meta["id"], meta["kind"], meta.get("source"))
-            except Exception as e:
-                log.info("poll error: %s", e)
-                time.sleep(5)
+                    write_clipboard(sniff(saved)[0], saved)
+            log.info("pasted shared %s", kind)
+        except Exception as e:
+            log.info("paste error: %s", e)
+        finally:
+            busy.clear()
 
-    threading.Thread(target=poller, daemon=True).start()
+    def hotkey_loop():
+        if not user32.RegisterHotKey(None, 1, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_V):
+            log.warning("Ctrl+Alt+V is taken by another program (error %s)", ctypes.get_last_error())
+            return
+        log.info("Ctrl+Alt+V registered")
+        msg = wintypes.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            if msg.message == WM_HOTKEY and not busy.is_set():
+                busy.set()
+                threading.Thread(target=paste_shared, daemon=True).start()
+
+    threading.Thread(target=hotkey_loop, daemon=True).start()
     last_seq = user32.GetClipboardSequenceNumber()
     log.info("client started")
     while True:

@@ -1,11 +1,14 @@
 import AppKit
+import ApplicationServices
+import Carbon.HIToolbox
 import CryptoKit
 
 /// Общий буфер между устройствами через свой сервер (tools/clipsync).
 /// Включается файлом ~/Library/Application Support/QyvroClipboard/cloud.json:
 /// {"url": "https://host/clip", "token": "...", "device": "mac-m4"}.
-/// Без файла ничего не делает. Синхронизируется один последний элемент:
-/// текст или картинка. Файлы и секреты из менеджеров паролей не уходят.
+/// Без файла ничего не делает. Скопированное здесь уходит на сервер само,
+/// а вставка из общего буфера только по ⌃⌘V: свой буфер никто не перетирает.
+/// Файлы и секреты из менеджеров паролей не уходят.
 final class QyvroCloudClipboardSync {
     static let shared = QyvroCloudClipboardSync()
 
@@ -35,16 +38,19 @@ final class QyvroCloudClipboardSync {
     private var config: Config?
     private var device = "mac"
     private var lastSha: String?
-    private var lastId: String?
-    private var primed = false
-    private var ignoreChangeCount = -1
+    /// Номера изменений буфера, которые сделал сам Qyvro при вставке
+    /// из общего буфера: их не отправляем и не пишем в историю.
+    private var ownChangeCounts: Set<Int> = []
+    private var pasteInFlight = false
     private var started = false
     private lazy var session: URLSession = {
         let configuration = URLSessionConfiguration.ephemeral
-        configuration.timeoutIntervalForRequest = 60
+        configuration.timeoutIntervalForRequest = 20
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         return URLSession(configuration: configuration)
     }()
+
+    var isEnabled: Bool { config != nil }
 
     func start() {
         guard !started else { return }
@@ -58,12 +64,17 @@ final class QyvroCloudClipboardSync {
               !loaded.token.isEmpty else { return }
         config = loaded
         device = loaded.device ?? Host.current().localizedName ?? "mac"
-        poll()
+        GlobalHotKeyCenter.shared.onSharedPaste = { [weak self] in self?.pasteShared() }
+        GlobalHotKeyCenter.shared.registerSharedPaste()
+    }
+
+    func isOwnChange(_ changeCount: Int) -> Bool {
+        ownChangeCounts.contains(changeCount)
     }
 
     /// Зовётся наблюдателем буфера Qyvro на каждое изменение.
     func pasteboardChanged(_ pasteboard: NSPasteboard, changeCount: Int) {
-        guard config != nil, changeCount != ignoreChangeCount else { return }
+        guard config != nil, !ownChangeCounts.contains(changeCount) else { return }
         let types = pasteboard.types ?? []
         if types.contains(where: { Self.skippedTypes.contains($0.rawValue) }) { return }
         guard let payload = Self.payload(from: pasteboard),
@@ -116,76 +127,118 @@ final class QyvroCloudClipboardSync {
         else { return }
         request.httpMethod = "POST"
         request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
-        session.uploadTask(with: request, from: payload) { [weak self] data, _, _ in
-            guard let data, let meta = try? JSONDecoder().decode(Meta.self, from: data),
-                  let id = meta.id else { return }
-            DispatchQueue.main.async { self?.lastId = id }
-        }.resume()
+        session.uploadTask(with: request, from: payload) { _, _, _ in }.resume()
     }
 
-    private func poll() {
-        var query: [URLQueryItem] = []
-        if primed {
-            query = [URLQueryItem(name: "wait", value: "25"),
-                     URLQueryItem(name: "since", value: lastId ?? "")]
-        }
-        guard let request = request("/meta", query: query) else { return }
+    // MARK: - Вставка из общего буфера (⌃⌘V)
+    // Свой буфер не перезаписываем насовсем: кладём элемент с сервера,
+    // жмём ⌘V за человека и возвращаем то, что лежало до этого.
+
+    private func pasteShared() {
+        guard !pasteInFlight, let request = request("/data") else { return }
+        pasteInFlight = true
         session.dataTask(with: request) { [weak self] data, response, _ in
+            let http = response as? HTTPURLResponse
+            let kind = http?.value(forHTTPHeaderField: "X-Clip-Kind")
             DispatchQueue.main.async {
                 guard let self else { return }
-                let ok = (response as? HTTPURLResponse)?.statusCode == 200
-                guard ok, let data, let meta = try? JSONDecoder().decode(Meta.self, from: data) else {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 5) { self.poll() }
+                guard let data, http?.statusCode == 200, !data.isEmpty else {
+                    self.pasteInFlight = false
+                    NSSound.beep()
                     return
                 }
-                self.handle(meta)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { self.poll() }
+                self.paste(data, kind: kind)
             }
         }.resume()
     }
 
-    private func handle(_ meta: Meta) {
-        guard let id = meta.id, let sha = meta.sha else {
-            primed = true
+    private func paste(_ data: Data, kind: String?) {
+        let pasteboard = NSPasteboard.general
+        let saved = Self.snapshot(pasteboard)
+        guard write(data, kind: kind, to: pasteboard) else {
+            pasteInFlight = false
+            NSSound.beep()
             return
         }
-        let isNew = id != lastId
-        lastId = id
-        if !primed {
-            // При запуске буфер не перетираем, только запоминаем, что на сервере.
-            primed = true
-            if lastSha == nil { lastSha = sha }
+        ownChangeCounts.insert(pasteboard.changeCount)
+        guard Self.canPostKeys() else {
+            // Без доступа к «Универсальному доступу» ⌘V за человека не нажать:
+            // элемент остаётся в буфере, вставить можно обычным ⌘V.
+            pasteInFlight = false
             return
         }
-        guard isNew, meta.source != device, sha != lastSha else { return }
-        guard let request = request("/data") else { return }
-        session.dataTask(with: request) { [weak self] data, response, _ in
-            guard let data, (response as? HTTPURLResponse)?.statusCode == 200 else { return }
-            let realSha = (response as? HTTPURLResponse)?
-                .value(forHTTPHeaderField: "X-Clip-Sha") ?? Self.sha(data)
-            DispatchQueue.main.async { self?.apply(data, kind: meta.kind, sha: realSha) }
-        }.resume()
+        waitForModifiersReleased(deadline: Date().addingTimeInterval(1.5)) { [weak self] in
+            Self.postCommandV()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                guard let self else { return }
+                if let saved {
+                    pasteboard.clearContents()
+                    pasteboard.writeObjects(saved)
+                    self.ownChangeCounts.insert(pasteboard.changeCount)
+                }
+                self.pasteInFlight = false
+            }
+        }
     }
 
-    private func apply(_ data: Data, kind: String?, sha: String) {
-        let pasteboard = NSPasteboard.general
+    private func write(_ data: Data, kind: String?, to pasteboard: NSPasteboard) -> Bool {
         if kind == "text" {
             pasteboard.clearContents()
-            pasteboard.setString(String(decoding: data, as: UTF8.self), forType: .string)
-        } else {
-            guard let rep = NSBitmapImageRep(data: data) else { return }
-            // PNG кладём байт в байт: иначе второй Мак получит его через
-            // Универсальный буфер с другим хешем и отправит обратно как новый.
-            let isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47])
-            guard let png = isPNG ? data : rep.representation(using: .png, properties: [:])
-            else { return }
-            pasteboard.clearContents()
-            pasteboard.setData(png, forType: .png)
-            if let tiff = rep.tiffRepresentation {
-                pasteboard.setData(tiff, forType: .tiff)
-            }
+            return pasteboard.setString(String(decoding: data, as: UTF8.self), forType: .string)
         }
-        lastSha = kind == "text" ? sha : Self.sha(pasteboard.data(forType: .png) ?? data)
-        ignoreChangeCount = pasteboard.changeCount
+        guard let rep = NSBitmapImageRep(data: data) else { return false }
+        let isPNG = data.starts(with: [0x89, 0x50, 0x4E, 0x47])
+        guard let png = isPNG ? data : rep.representation(using: .png, properties: [:])
+        else { return false }
+        pasteboard.clearContents()
+        pasteboard.setData(png, forType: .png)
+        if let tiff = rep.tiffRepresentation {
+            pasteboard.setData(tiff, forType: .tiff)
+        }
+        return true
+    }
+
+    private static func snapshot(_ pasteboard: NSPasteboard) -> [NSPasteboardItem]? {
+        guard let items = pasteboard.pasteboardItems, !items.isEmpty else { return nil }
+        return items.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) { copy.setData(data, forType: type) }
+            }
+            return copy
+        }
+    }
+
+    private static func canPostKeys() -> Bool {
+        if AXIsProcessTrusted() { return true }
+        let prompt = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        _ = AXIsProcessTrustedWithOptions([prompt: true] as CFDictionary)
+        return false
+    }
+
+    /// ⌃ ещё зажат в момент хоткея: ждём, пока отпустят, иначе программа
+    /// увидит ⌃⌘V вместо обычного ⌘V.
+    private func waitForModifiersReleased(deadline: Date, then action: @escaping () -> Void) {
+        let flags = CGEventSource.flagsState(.combinedSessionState)
+        let held = flags.contains(.maskAlternate) || flags.contains(.maskShift)
+            || flags.contains(.maskControl)
+        if !held || Date() > deadline {
+            action()
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
+            self?.waitForModifiersReleased(deadline: deadline, then: action)
+        }
+    }
+
+    private static func postCommandV() {
+        let source = CGEventSource(stateID: .combinedSessionState)
+        let key = CGKeyCode(kVK_ANSI_V)
+        let down = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: true)
+        let up = CGEvent(keyboardEventSource: source, virtualKey: key, keyDown: false)
+        down?.flags = .maskCommand
+        up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap)
+        up?.post(tap: .cghidEventTap)
     }
 }

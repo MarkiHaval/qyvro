@@ -1031,7 +1031,9 @@ final class GlobalHotKeyCenter {
     static let shared = GlobalHotKeyCenter()
     var onSummon: (() -> Void)?
     var onClipboard: (() -> Void)?
+    var onSharedPaste: (() -> Void)?
     private var summonHotKeyRef: EventHotKeyRef?
+    private var sharedPasteHotKeyRef: EventHotKeyRef?
     private var clipboardHotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
 
@@ -1072,6 +1074,7 @@ final class GlobalHotKeyCenter {
                 switch identifier.id {
                 case 1: center.onSummon?()
                 case 2: center.onClipboard?()
+                case 3: center.onSharedPaste?()
                 default: break
                 }
             }
@@ -1125,6 +1128,24 @@ final class GlobalHotKeyCenter {
         )
         if status != noErr {
             NSLog("Qyvro: failed to register ⇧⌘V (%d)", status)
+        }
+    }
+
+    /// ⌃⌘V — вставить из общего буфера (см. CloudClipboardSync.swift).
+    func registerSharedPaste() {
+        installHandlerIfNeeded()
+        guard sharedPasteHotKeyRef == nil else { return }
+        let identifier = EventHotKeyID(signature: OSType(0x5159_5652), id: 3) // 'QYVR'
+        let status = RegisterEventHotKey(
+            UInt32(kVK_ANSI_V),
+            UInt32(cmdKey | controlKey),
+            identifier,
+            GetEventDispatcherTarget(),
+            0,
+            &sharedPasteHotKeyRef
+        )
+        if status != noErr {
+            NSLog("Qyvro: failed to register ⌃⌘V (%d)", status)
         }
     }
 

@@ -339,6 +339,8 @@ private final class QyvroClipboardWatcher {
         let pasteboard = NSPasteboard.general
         guard pasteboard.changeCount != lastChange else { return }
         lastChange = pasteboard.changeCount
+        // Временная подмена буфера при ⌃⌘V не попадает ни в историю, ни на сервер.
+        guard !QyvroCloudClipboardSync.shared.isOwnChange(lastChange) else { return }
         store.addPasteboard(pasteboard)
         QyvroCloudClipboardSync.shared.pasteboardChanged(pasteboard, changeCount: lastChange)
     }
