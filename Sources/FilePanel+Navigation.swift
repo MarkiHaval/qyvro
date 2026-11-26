@@ -558,6 +558,27 @@ extension FilePanel {
         historyIndex = history.count - 1
     }
 
+    /// Заменяет текущую вершину истории на соседнюю папку, не засоряя стек
+    /// «Назад / Вперёд» (свайп двумя пальцами). Так свайп назад всегда выходит
+    /// в родительскую папку, а свайп вперёд заходит обратно в текущую соседнюю.
+    func replaceCurrentHistoryWithSibling(_ targetURL: URL, parentURL: URL) {
+        guard !isChangingHistory else { return }
+        let entry = HistoryEntry(url: targetURL, tagKey: nil, tagTitle: nil)
+        if historyIndex > 0, historyIndex < history.count {
+            history[historyIndex] = entry
+            if historyIndex + 1 < history.count {
+                history.removeSubrange((historyIndex + 1)..<history.count)
+            }
+        } else if parentURL.standardizedFileURL.path != targetURL.standardizedFileURL.path {
+            let parentEntry = HistoryEntry(url: parentURL.standardizedFileURL, tagKey: nil, tagTitle: nil)
+            history = [parentEntry, entry]
+            historyIndex = 1
+        } else {
+            history = [entry]
+            historyIndex = 0
+        }
+    }
+
     func openZipArchive(
         _ zipURL: URL,
         internalPath: String = "",
@@ -1542,7 +1563,8 @@ extension FilePanel {
         studioHeaderView.flashSiblingStep(delta: delta)
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         FPActionLog.action("соседняя папка \(delta > 0 ? "→" : "←")", targetURL.lastPathComponent)
-        navigate(to: targetURL, addingToHistory: true)
+        replaceCurrentHistoryWithSibling(targetURL, parentURL: parent)
+        navigate(to: targetURL, addingToHistory: false)
         restoreKeyboardFocusAfterSiblingJump()
         return true
     }
@@ -1550,6 +1572,7 @@ extension FilePanel {
     func openSiblingFolder(_ url: URL) {
         let std = url.standardizedFileURL
         guard std.path != currentURL.standardizedFileURL.path else { return }
+        let parent = std.deletingLastPathComponent().standardizedFileURL
         if let idx = siblingFolders.firstIndex(where: { $0.standardizedFileURL.path == std.path }) {
             let delta = idx >= siblingCurrentIndex ? 1 : -1
             siblingCurrentIndex = idx
@@ -1557,7 +1580,8 @@ extension FilePanel {
         }
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
         FPActionLog.action("прыжок в соседнюю папку", std.lastPathComponent)
-        navigate(to: std, addingToHistory: true)
+        replaceCurrentHistoryWithSibling(std, parentURL: parent)
+        navigate(to: std, addingToHistory: false)
         restoreKeyboardFocusAfterSiblingJump()
     }
 
