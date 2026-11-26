@@ -43,7 +43,7 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 
 ### Cull Hundreds of Frames in Minutes
 
-- **Built-in viewer (`Space`)**: Instant full-resolution preview with arrow-key browsing. Video and audio autoplay immediately and remember your volume/mute state.
+- **Built-in Studio V4 Darkroom viewer (`Space`)**: Color-accurate neutral obsidian lightbox framed by the Aurora Horizon bezel — zero background bleed-through, instant arrow-key browsing, context-aware glass HUD hints, autoplaying video/audio with a floating smoked-glass transport bar, and clickable `A / B` split wipe labels.
 - **Grab exact video frame to PNG (`E`)**: Extracts the current video frame at lossless full resolution directly next to the video (`<name>_frame_MM-SS.png`, Display P3 preserved, undoable with `⌘Z`) — or click the camera button on the transport bar.
 - **Editorial font preview**: `.ttf`, `.otf`, `.ttc`, and `.dfont` files render live typographic `"Aa"` thumbnail cards in the grid and a full multi-size specimen sheet on `Space`.
 - **Side-by-side comparison (`C`)** & **Split Wipe curtain (`V`)**: Compare 2–3 frames next to each other, or overlay two images with an interactive draggable split divider to inspect grades, crops, and upscales.
@@ -67,6 +67,7 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 - **Paste clipboard directly to file (`⌘V`)**: Copy any screenshot, Figma frame, browser image, or text snippet and press `⌘V` inside any folder to save it instantly as `Clipboard_YYYY-MM-DD_HH-mm-ss.png` (or `.txt`), with full `⌘Z` Undo.
 - **Browse `.zip` archives as folders (no unzip)**: Press `Enter` or double-click any `.zip` to explore nested folders and preview files with `Space` without extracting gigabytes — then extract just the items you need.
 - **Fuzzy Folder Jump (`⌘J`)**: Keyboard-first instant jump across bookmarks, open tabs, recent folders, and nearby subfolders (`Enter` opens here, `⌘Enter` opens in a new tab).
+- **Sibling Folder Stepper (`[` / `]` or `⌥←` / `⌥→`)**: Step straight between neighboring folders at the same level via a pinned `‹ 5/22 ›` capsule (with dropdown jumper) next to `⌘J` — completely decoupled from two-finger swipe Back/Forward history.
 - **Subtle Git branch badge**: Inside Git repositories, the Studio header quietly displays the active branch and modified file count (`⎇ main · 3`) without cluttering media folders.
 - **Silent update checker**: Manually check for newer GitHub Releases from Settings or the App menu — zero background phoning home.
 - **Two-finger swipe Back / Forward** with a hardware-accelerated Display P3 wave transition (zero color shift or flash).
@@ -100,6 +101,7 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 | `⌘V` | Paste files — or save clipboard image/text directly as `.png`/`.txt` |
 | `⌘⌫` | Move selection to Trash |
 | `⌘↑` / `⌘←` / `⌘→` | Parent folder / Back / Forward |
+| `[` / `]` or `⌥←` / `⌥→` | Previous / next sibling folder (works in EN & RU layouts) |
 | `Shift + scroll` | Scroll collapsed date row horizontally |
 | `Ctrl + scroll` / Pinch | Scale thumbnail size continuously |
 | `⌥ + drag` | Export ready-to-share JPEG (≤5999 px, ≤20 MB) |
