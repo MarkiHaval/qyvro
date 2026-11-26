@@ -1,0 +1,20 @@
+.DS_Store
+._*
+
+# Build artifacts (reproduced via build_app.sh)
+Releases/*.zip
+Releases/*.dmg
+Releases/Qyvro-macOS-Universal-*/
+*.app/
+
+# Local build directories
+build/
+.build/
+DerivedData/
+
+# Cloud clipboard sync: tokens, runtime data, and logs stay local
+tools/clipsync/token.txt
+tools/clipsync/data/
+tools/clipsync/*.log
+tools/clipsync/.venv/
+cloud.json
