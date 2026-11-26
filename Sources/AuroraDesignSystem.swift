@@ -1521,6 +1521,7 @@ final class QyvroSiblingFolderStepper: FPLayerView {
     private let prevBtn = QyvroStepperSegmentButton(cornerRadius: 10)
     private let indexBtn = QyvroStepperSegmentButton(cornerRadius: 8)
     private let nextBtn = QyvroStepperSegmentButton(cornerRadius: 10)
+    private var indexWidthConstraint: NSLayoutConstraint?
     private var siblings: [URL] = []
     private var currentIndex: Int = 0
     private var parentName: String = ""
@@ -1553,6 +1554,7 @@ final class QyvroSiblingFolderStepper: FPLayerView {
 
         indexBtn.target = self
         indexBtn.action = #selector(indexPressed(_:))
+        indexBtn.alignment = .center
         indexBtn.setContentHuggingPriority(.required, for: .horizontal)
         indexBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
 
@@ -1562,6 +1564,9 @@ final class QyvroSiblingFolderStepper: FPLayerView {
         row.alignment = .centerY
         row.translatesAutoresizingMaskIntoConstraints = false
         addSubview(row)
+
+        let fixedIndexWidth = indexBtn.widthAnchor.constraint(equalToConstant: 48)
+        indexWidthConstraint = fixedIndexWidth
 
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 24),
@@ -1573,7 +1578,7 @@ final class QyvroSiblingFolderStepper: FPLayerView {
             prevBtn.widthAnchor.constraint(equalToConstant: 21),
             prevBtn.heightAnchor.constraint(equalToConstant: 21),
             indexBtn.heightAnchor.constraint(equalToConstant: 21),
-            indexBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 42),
+            fixedIndexWidth,
             nextBtn.widthAnchor.constraint(equalToConstant: 21),
             nextBtn.heightAnchor.constraint(equalToConstant: 21)
         ])
@@ -1636,19 +1641,24 @@ final class QyvroSiblingFolderStepper: FPLayerView {
     }
 
     private func renderIndexLabel() {
+        indexWidthConstraint?.constant = siblings.count >= 100 ? 60 : 48
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
         let str = NSMutableAttributedString()
         str.append(NSAttributedString(
-            string: " \(currentIndex + 1)",
+            string: "\(currentIndex + 1)",
             attributes: [
                 .font: FPStyle.monoMetaFont(ofSize: 10.5, weight: .semibold),
-                .foregroundColor: FPStyle.text
+                .foregroundColor: FPStyle.text,
+                .paragraphStyle: paragraph
             ]
         ))
         str.append(NSAttributedString(
-            string: "/\(siblings.count) ",
+            string: "/\(siblings.count)",
             attributes: [
                 .font: FPStyle.monoMetaFont(ofSize: 10, weight: .regular),
-                .foregroundColor: FPStyle.dimText.withAlphaComponent(0.76)
+                .foregroundColor: FPStyle.dimText.withAlphaComponent(0.76),
+                .paragraphStyle: paragraph
             ]
         ))
         indexBtn.attributedTitle = str
@@ -1847,7 +1857,7 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             self?.onOpenSiblingFolder?(url)
         }
 
-        let heroCluster = NSStackView(views: [navCluster, titleLabel, countPill, siblingStepper, parentButton, gitPill])
+        let heroCluster = NSStackView(views: [navCluster, titleLabel, countPill, parentButton, gitPill])
         heroCluster.orientation = .horizontal
         heroCluster.spacing = 8
         heroCluster.alignment = .centerY
@@ -1944,10 +1954,19 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
         fuzzyJumpBtn.setContentHuggingPriority(.required, for: .horizontal)
         fuzzyJumpBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        let rightPillCluster = NSStackView(views: [siblingStepper, fuzzyJumpBtn])
+        rightPillCluster.orientation = .horizontal
+        rightPillCluster.spacing = 6
+        rightPillCluster.alignment = .centerY
+        rightPillCluster.detachesHiddenViews = true
+        rightPillCluster.translatesAutoresizingMaskIntoConstraints = false
+        rightPillCluster.setContentHuggingPriority(.required, for: .horizontal)
+        rightPillCluster.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         let pillRow = NSView()
         pillRow.translatesAutoresizingMaskIntoConstraints = false
         pillRow.addSubview(locationsFadeContainer)
-        pillRow.addSubview(fuzzyJumpBtn)
+        pillRow.addSubview(rightPillCluster)
 
         addSubview(heroRow)
         addSubview(pillRow)
@@ -2011,11 +2030,11 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             pillRow.heightAnchor.constraint(equalToConstant: 24),
 
             locationsFadeContainer.leadingAnchor.constraint(equalTo: pillRow.leadingAnchor),
-            locationsFadeContainer.trailingAnchor.constraint(equalTo: fuzzyJumpBtn.leadingAnchor, constant: -8),
+            locationsFadeContainer.trailingAnchor.constraint(equalTo: rightPillCluster.leadingAnchor, constant: -8),
             locationsFadeContainer.topAnchor.constraint(equalTo: pillRow.topAnchor),
             locationsFadeContainer.bottomAnchor.constraint(equalTo: pillRow.bottomAnchor),
-            fuzzyJumpBtn.trailingAnchor.constraint(equalTo: pillRow.trailingAnchor),
-            fuzzyJumpBtn.centerYAnchor.constraint(equalTo: pillRow.centerYAnchor),
+            rightPillCluster.trailingAnchor.constraint(equalTo: pillRow.trailingAnchor),
+            rightPillCluster.centerYAnchor.constraint(equalTo: pillRow.centerYAnchor),
 
             bottomHairline.topAnchor.constraint(equalTo: pillRow.bottomAnchor, constant: 6),
             bottomHairline.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
@@ -2202,6 +2221,7 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
 
     func updateSiblingFolders(_ siblings: [URL], currentIndex: Int, parentName: String) {
         siblingStepper.update(siblings: siblings, currentIndex: currentIndex, parentName: parentName)
+        updateLocationsFadeMask()
     }
 
     func flashSiblingStep(delta: Int) {
