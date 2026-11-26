@@ -463,6 +463,14 @@ final class PanelTableView: NSTableView {
             filePanel?.handleEscapeKey()
         case 17 where event.modifierFlags.contains(.command):
             filePanel?.openSelectionInNewTab(nil)
+        case 33 where event.modifierFlags.intersection([.command, .control, .option]).isEmpty:
+            filePanel?.navigateToSiblingFolder(delta: -1)
+        case 30 where event.modifierFlags.intersection([.command, .control, .option]).isEmpty:
+            filePanel?.navigateToSiblingFolder(delta: 1)
+        case 123 where event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command):
+            filePanel?.navigateToSiblingFolder(delta: -1)
+        case 124 where event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command):
+            filePanel?.navigateToSiblingFolder(delta: 1)
         case 123 where event.modifierFlags.contains(.command):
             filePanel?.navigateHistoryWithWave(goesBack: true)
         case 124 where event.modifierFlags.contains(.command):

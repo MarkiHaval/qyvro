@@ -178,6 +178,11 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     var virtualTagTitle: String?
     var virtualSearchTitle: String?
     var virtualArchiveURL: URL?
+    var siblingFolders: [URL] = []
+    var siblingParentPath: String?
+    var siblingCurrentIndex: Int = 0
+    var siblingScanGeneration: Int = 0
+    var parentSortHints: [String: (key: String, ascending: Bool)] = [:]
     var virtualArchiveInternalPath: String = ""
     var virtualArchiveEntryByURL: [String: String] = [:]
     var isArchiveMode: Bool { virtualArchiveURL != nil }
@@ -371,9 +376,17 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             } else {
                 tableView.selectAll(nil)
             }
-        case 123 where !event.modifierFlags.contains(.command):
+        case 33 where event.modifierFlags.intersection([.command, .control, .option]).isEmpty && !isGridTypeSelectActive:
+            navigateToSiblingFolder(delta: -1)
+        case 30 where event.modifierFlags.intersection([.command, .control, .option]).isEmpty && !isGridTypeSelectActive:
+            navigateToSiblingFolder(delta: 1)
+        case 123 where event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command):
+            navigateToSiblingFolder(delta: -1)
+        case 124 where event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command):
+            navigateToSiblingFolder(delta: 1)
+        case 123 where !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.option):
             moveGridSelection(direction: .left, extendingRange: event.modifierFlags.contains(.shift))
-        case 124 where !event.modifierFlags.contains(.command):
+        case 124 where !event.modifierFlags.contains(.command) && !event.modifierFlags.contains(.option):
             moveGridSelection(direction: .right, extendingRange: event.modifierFlags.contains(.shift))
         case 126 where !event.modifierFlags.contains(.command):
             moveGridSelection(direction: .up, extendingRange: event.modifierFlags.contains(.shift))
@@ -605,6 +618,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             isRecents: isRecentItemsView
         )
         studioHeaderView.updateFilter(gridFilter)
+        refreshSiblingFoldersState()
     }
 
     @objc func thumbnailCacheCleared(_ notification: Notification) {
@@ -834,6 +848,12 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         }
         studioHeaderView.onGoForward = { [weak self] in self?.goForward(nil) }
         studioHeaderView.onGoUp = { [weak self] in self?.goUp(nil) }
+        studioHeaderView.onStepSiblingFolder = { [weak self] delta in
+            self?.navigateToSiblingFolder(delta: delta)
+        }
+        studioHeaderView.onOpenSiblingFolder = { [weak self] url in
+            self?.openSiblingFolder(url)
+        }
         studioHeaderView.onRequestPathEdit = { [weak self] in self?.focusPath() }
         studioHeaderView.onOpenRecents = { [weak self] in self?.showRecentItems() }
         studioHeaderView.onOpenURL = { [weak self] url in self?.navigate(to: url) }

@@ -2581,6 +2581,16 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
             activePanel?.renameSelection(nil)
             return true
         }
+        // `[` и `]` (по физическому keyCode, на любой раскладке) листают
+        // соседние папки на том же уровне, пока фокус не в текстовом поле.
+        if (event.keyCode == 33 || event.keyCode == 30),
+           !(window?.firstResponder is NSText),
+           event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty,
+           let panel = activePanel,
+           !panel.isGridTypeSelectActive {
+            panel.navigateToSiblingFolder(delta: event.keyCode == 33 ? -1 : 1)
+            return true
+        }
         return super.performKeyEquivalent(with: event)
     }
 
@@ -3815,6 +3825,8 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
     @objc func goBack(_ sender: Any?) { activePanel?.navigateHistoryWithWave(goesBack: true) }
     @objc func goForward(_ sender: Any?) { activePanel?.navigateHistoryWithWave(goesBack: false) }
     @objc func goUp(_ sender: Any?) { activePanel?.goUp(sender) }
+    @objc func goPreviousSiblingFolder(_ sender: Any?) { activePanel?.navigateToSiblingFolder(delta: -1) }
+    @objc func goNextSiblingFolder(_ sender: Any?) { activePanel?.navigateToSiblingFolder(delta: 1) }
     @objc func reload(_ sender: Any?) { activePanel?.reload(sender) }
     @objc func toggleHidden(_ sender: Any?) { activePanel?.toggleHidden(sender) }
     @objc func focusPath(_ sender: Any?) { activePanel?.focusPath() }

@@ -1443,16 +1443,287 @@ final class QyvroStudioPillButton: NSButton {
     }
 }
 
+/// Кнопка-сегмент внутри капсулы переключения соседних папок (`‹  5 / 21  ›`).
+private final class QyvroStepperSegmentButton: NSButton {
+    private var trackingRef: NSTrackingArea?
+    private var isHovered = false
+    private var isFlashing = false
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    init(cornerRadius: CGFloat) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        isBordered = false
+        bezelStyle = .inline
+        setButtonType(.momentaryChange)
+        layer?.cornerRadius = cornerRadius
+        translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingRef { removeTrackingArea(trackingRef) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        refreshAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        refreshAppearance()
+    }
+
+    func flashAccent() {
+        isFlashing = true
+        refreshAppearance()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22) { [weak self] in
+            guard let self else { return }
+            self.isFlashing = false
+            self.refreshAppearance()
+        }
+    }
+
+    func refreshAppearance() {
+        let tint = FPStyle.text.blended(withFraction: 0.22, of: FPStyle.accent) ?? FPStyle.text
+        if isFlashing {
+            layer?.backgroundColor = FPStyle.accent.withAlphaComponent(0.26).cgColor
+            contentTintColor = FPStyle.orange
+        } else if isHovered && isEnabled {
+            layer?.backgroundColor = tint.withAlphaComponent(0.13).cgColor
+            contentTintColor = FPStyle.text
+        } else {
+            layer?.backgroundColor = NSColor.clear.cgColor
+            contentTintColor = FPStyle.dimText
+        }
+    }
+}
+
+/// Компактный переключатель соседних папок `‹  5 / 21  ›` в шапке Studio V4.
+/// Клик по стрелкам переходит к предыдущей/следующей соседней папке (`[` / `]`),
+/// а клик по счётчику открывает список всех папок на этом уровне.
+final class QyvroSiblingFolderStepper: FPLayerView {
+    var onStep: ((Int) -> Void)?
+    var onSelectURL: ((URL) -> Void)?
+
+    private let prevBtn = QyvroStepperSegmentButton(cornerRadius: 10)
+    private let indexBtn = QyvroStepperSegmentButton(cornerRadius: 8)
+    private let nextBtn = QyvroStepperSegmentButton(cornerRadius: 10)
+    private var siblings: [URL] = []
+    private var currentIndex: Int = 0
+    private var parentName: String = ""
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    init() {
+        super.init(color: .clear, cornerRadius: 12)
+        translatesAutoresizingMaskIntoConstraints = false
+        layer?.borderWidth = 0.65
+        isHidden = true
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        prevBtn.imagePosition = .imageOnly
+        prevBtn.target = self
+        prevBtn.action = #selector(prevPressed)
+
+        nextBtn.imagePosition = .imageOnly
+        nextBtn.target = self
+        nextBtn.action = #selector(nextPressed)
+
+        if #available(macOS 11.0, *) {
+            let cfg = NSImage.SymbolConfiguration(pointSize: 9.5, weight: .semibold)
+            prevBtn.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: L("Предыдущая папка", "Previous folder"))?
+                .withSymbolConfiguration(cfg)
+            nextBtn.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: L("Следующая папка", "Next folder"))?
+                .withSymbolConfiguration(cfg)
+        }
+
+        indexBtn.target = self
+        indexBtn.action = #selector(indexPressed(_:))
+        indexBtn.setContentHuggingPriority(.required, for: .horizontal)
+        indexBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let row = NSStackView(views: [prevBtn, indexBtn, nextBtn])
+        row.orientation = .horizontal
+        row.spacing = 1
+        row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
+
+        NSLayoutConstraint.activate([
+            heightAnchor.constraint(equalToConstant: 24),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+
+            prevBtn.widthAnchor.constraint(equalToConstant: 21),
+            prevBtn.heightAnchor.constraint(equalToConstant: 21),
+            indexBtn.heightAnchor.constraint(equalToConstant: 21),
+            indexBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 42),
+            nextBtn.widthAnchor.constraint(equalToConstant: 21),
+            nextBtn.heightAnchor.constraint(equalToConstant: 21)
+        ])
+        applyTheme()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func update(siblings: [URL], currentIndex: Int, parentName: String) {
+        self.siblings = siblings
+        self.currentIndex = currentIndex
+        self.parentName = parentName
+
+        guard siblings.count > 1, siblings.indices.contains(currentIndex) else {
+            isHidden = true
+            return
+        }
+        isHidden = false
+
+        let hasPrev = currentIndex > 0
+        let hasNext = currentIndex + 1 < siblings.count
+        prevBtn.isEnabled = hasPrev
+        prevBtn.alphaValue = hasPrev ? 1.0 : 0.28
+        nextBtn.isEnabled = hasNext
+        nextBtn.alphaValue = hasNext ? 1.0 : 0.28
+
+        prevBtn.toolTip = hasPrev
+            ? L("Предыдущая папка: \(siblings[currentIndex - 1].lastPathComponent)  ([)", "Previous folder: \(siblings[currentIndex - 1].lastPathComponent)  ([)")
+            : L("Это первая папка", "First sibling folder")
+        nextBtn.toolTip = hasNext
+            ? L("Следующая папка: \(siblings[currentIndex + 1].lastPathComponent)  (])", "Next folder: \(siblings[currentIndex + 1].lastPathComponent)  (])")
+            : L("Это последняя папка", "Last sibling folder")
+        indexBtn.toolTip = parentName.isEmpty
+            ? L("Соседние папки — нажмите для выбора ([ / ])", "Sibling folders — click to jump ([ / ])")
+            : L("Папки в «\(parentName)» — нажмите для выбора ([ / ])", "Folders in \"\(parentName)\" — click to jump ([ / ])")
+
+        renderIndexLabel()
+        prevBtn.refreshAppearance()
+        nextBtn.refreshAppearance()
+    }
+
+    func flashStep(delta: Int) {
+        if delta < 0 {
+            prevBtn.flashAccent()
+        } else if delta > 0 {
+            nextBtn.flashAccent()
+        }
+    }
+
+    func applyTheme() {
+        let tint = FPStyle.text.blended(withFraction: 0.22, of: FPStyle.accent) ?? FPStyle.text
+        layer?.backgroundColor = tint.withAlphaComponent(0.065).cgColor
+        layer?.borderColor = tint.withAlphaComponent(0.11).cgColor
+        prevBtn.refreshAppearance()
+        indexBtn.refreshAppearance()
+        nextBtn.refreshAppearance()
+        if !siblings.isEmpty && siblings.indices.contains(currentIndex) {
+            renderIndexLabel()
+        }
+    }
+
+    private func renderIndexLabel() {
+        let str = NSMutableAttributedString()
+        str.append(NSAttributedString(
+            string: " \(currentIndex + 1)",
+            attributes: [
+                .font: FPStyle.monoMetaFont(ofSize: 10.5, weight: .semibold),
+                .foregroundColor: FPStyle.text
+            ]
+        ))
+        str.append(NSAttributedString(
+            string: "/\(siblings.count) ",
+            attributes: [
+                .font: FPStyle.monoMetaFont(ofSize: 10, weight: .regular),
+                .foregroundColor: FPStyle.dimText.withAlphaComponent(0.76)
+            ]
+        ))
+        indexBtn.attributedTitle = str
+    }
+
+    @objc private func prevPressed() {
+        guard currentIndex > 0 else { return }
+        prevBtn.flashAccent()
+        onStep?(-1)
+    }
+
+    @objc private func nextPressed() {
+        guard currentIndex + 1 < siblings.count else { return }
+        nextBtn.flashAccent()
+        onStep?(1)
+    }
+
+    @objc private func indexPressed(_ sender: NSButton) {
+        guard siblings.count > 1 else { return }
+        let menu = NSMenu()
+        let folderImg: NSImage?
+        if #available(macOS 11.0, *) {
+            let cfg = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
+            folderImg = NSImage(systemSymbolName: "folder.fill", accessibilityDescription: nil)?
+                .withSymbolConfiguration(cfg)
+            folderImg?.isTemplate = true
+        } else {
+            folderImg = nil
+        }
+
+        if !parentName.isEmpty {
+            let header = NSMenuItem(
+                title: L("\(parentName)  ·  \(siblings.count) папок", "\(parentName)  ·  \(siblings.count) folders"),
+                action: nil,
+                keyEquivalent: ""
+            )
+            header.isEnabled = false
+            menu.addItem(header)
+            menu.addItem(.separator())
+        }
+
+        for (idx, url) in siblings.enumerated() {
+            let item = NSMenuItem(
+                title: "\(idx + 1).  \(url.lastPathComponent)",
+                action: #selector(siblingMenuPicked(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = url
+            item.image = folderImg
+            item.state = (idx == currentIndex) ? .on : .off
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height + 5), in: sender)
+    }
+
+    @objc private func siblingMenuPicked(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        onSelectURL?(url)
+    }
+}
+
 /// Editorial-шапка для макета V4 «Студия · Остров»:
 /// 1-я строка — стрелки истории, крупное имя папки (Avenir Next Editorial) +
-/// счётчик + кликабельный родитель и встроенная капсула поиска («Папка / Мак»).
+/// счётчик + переключатель соседних папок (`‹ 5/21 ›`) + кликабельный родитель
+/// и встроенная капсула поиска («Папка / Мак»).
 /// 2-я строка — тематические дымчатые капсулы локаций с автозатуханием краёв
-/// при узком окне + единый утопленный сегментный лоток фильтров «Все / Фото / Видео / ★».
+/// при узком окне + кнопка быстрого перехода `⌘J`.
 final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
     var onGoBack: (() -> Void)?
     var onLongPressBack: ((NSButton) -> Void)?
     var onGoForward: (() -> Void)?
     var onGoUp: (() -> Void)?
+    var onStepSiblingFolder: ((Int) -> Void)?
+    var onOpenSiblingFolder: ((URL) -> Void)?
     var onRequestPathEdit: (() -> Void)?
     var onOpenRecents: (() -> Void)?
     var onOpenURL: ((URL) -> Void)?
@@ -1471,6 +1742,7 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
     private let titleLabel = NSTextField(labelWithString: "")
     private let countPill = FPLayerView(color: .clear, cornerRadius: 9)
     private let countLabel = NSTextField(labelWithString: "")
+    private let siblingStepper = QyvroSiblingFolderStepper()
     private let parentButton = NSButton()
 
     private let bookmarksBtn = NSButton()
@@ -1568,10 +1840,18 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             gitPill.heightAnchor.constraint(equalToConstant: 20)
         ])
 
-        let heroCluster = NSStackView(views: [navCluster, titleLabel, countPill, parentButton, gitPill])
+        siblingStepper.onStep = { [weak self] delta in
+            self?.onStepSiblingFolder?(delta)
+        }
+        siblingStepper.onSelectURL = { [weak self] url in
+            self?.onOpenSiblingFolder?(url)
+        }
+
+        let heroCluster = NSStackView(views: [navCluster, titleLabel, countPill, siblingStepper, parentButton, gitPill])
         heroCluster.orientation = .horizontal
-        heroCluster.spacing = 9
+        heroCluster.spacing = 8
         heroCluster.alignment = .centerY
+        heroCluster.detachesHiddenViews = true
         heroCluster.translatesAutoresizingMaskIntoConstraints = false
 
         // Встроенная капсула поиска.
@@ -1920,6 +2200,14 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
         updateLocationsFadeMask()
     }
 
+    func updateSiblingFolders(_ siblings: [URL], currentIndex: Int, parentName: String) {
+        siblingStepper.update(siblings: siblings, currentIndex: currentIndex, parentName: parentName)
+    }
+
+    func flashSiblingStep(delta: Int) {
+        siblingStepper.flashStep(delta: delta)
+    }
+
     func updateFilter(_ filter: FPGridFilter) {
         for pill in filterPills {
             pill.isSelectedPill = (pill.filterOption == filter)
@@ -1992,6 +2280,7 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
         }
         countPill.layer?.backgroundColor = tint.withAlphaComponent(0.07).cgColor
         countLabel.textColor = FPStyle.dimText
+        siblingStepper.applyTheme()
         parentButton.contentTintColor = FPStyle.dimText.withAlphaComponent(0.78)
         fuzzyJumpBtn.updateAppearance()
         parentButton.font = FPStyle.bodyFont(ofSize: 12, weight: .medium)

@@ -246,6 +246,11 @@ extension FilePanel {
             && currentURL.standardizedFileURL == resolved.standardizedFileURL
 
         if !isSameDirectory {
+            let previousPath = currentURL.standardizedFileURL.path
+            let resolvedParentPath = resolved.deletingLastPathComponent().standardizedFileURL.path
+            if resolvedParentPath == previousPath {
+                parentSortHints[previousPath] = (currentSortKey, currentSortAscending)
+            }
             saveCurrentFolderViewState()
             pendingFolderViewState = folderViewStates[resolved.standardizedFileURL.path]
             applySavedFolderProfileIfPresent(for: resolved)
@@ -1398,6 +1403,237 @@ extension FilePanel {
         activate()
         showHiddenFiles.toggle()
         UserDefaults.standard.set(showHiddenFiles, forKey: "ShowHiddenFiles")
+        siblingParentPath = nil
         loadCurrentDirectory()
+    }
+
+    // MARK: - Переключение по соседним папкам (`‹ 5/21 ›`, `[` / `]`, `⌥←` / `⌥→`)
+
+    var isGridTypeSelectActive: Bool {
+        !typeSelectBuffer.isEmpty && Date().timeIntervalSince(typeSelectUpdatedAt) <= 0.85
+    }
+
+    private func siblingSortSpec(for parent: URL) -> (key: String, ascending: Bool) {
+        if let profile = FPFolderProfileStore.shared.profile(for: parent),
+           let key = profile.sortKey,
+           let asc = profile.sortAscending {
+            return (key, asc)
+        }
+        if let hint = parentSortHints[parent.standardizedFileURL.path] {
+            return hint
+        }
+        return (currentSortKey, currentSortAscending)
+    }
+
+    private func displayNameForParent(_ parent: URL) -> String {
+        let home = fileManager.homeDirectoryForCurrentUser.standardizedFileURL
+        let std = parent.standardizedFileURL
+        if std.path == home.path { return L("Дом", "Home") }
+        if std.path == "/" { return "Macintosh HD" }
+        return std.lastPathComponent
+    }
+
+    func refreshSiblingFoldersState() {
+        let std = currentURL.standardizedFileURL
+        let isRealFolder = !isRecentItemsView
+            && virtualTagTitle == nil
+            && virtualSearchTitle == nil
+            && virtualArchiveURL == nil
+            && std.path != "/"
+
+        guard isRealFolder else {
+            siblingScanGeneration += 1
+            siblingFolders = []
+            siblingParentPath = nil
+            siblingCurrentIndex = 0
+            studioHeaderView.updateSiblingFolders([], currentIndex: 0, parentName: "")
+            return
+        }
+
+        let parent = std.deletingLastPathComponent().standardizedFileURL
+        let parentPath = parent.path
+        let parentDisplay = displayNameForParent(parent)
+
+        // Если уже находимся в том же родителе — мгновенно обновляем счётчик из кэша,
+        // чтобы перещёлкивание `[` / `]` не мигало и работало с нулевой задержкой.
+        if siblingParentPath == parentPath,
+           let cachedIdx = siblingFolders.firstIndex(where: { $0.standardizedFileURL.path == std.path }) {
+            siblingCurrentIndex = cachedIdx
+            studioHeaderView.updateSiblingFolders(siblingFolders, currentIndex: cachedIdx, parentName: parentDisplay)
+        } else {
+            studioHeaderView.updateSiblingFolders([], currentIndex: 0, parentName: parentDisplay)
+        }
+
+        let (sortKey, sortAscending) = siblingSortSpec(for: parent)
+        let includeHidden = showHiddenFiles
+        siblingScanGeneration += 1
+        let generation = siblingScanGeneration
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let siblings = Self.sortedSiblingFolders(
+                in: parent,
+                sortKey: sortKey,
+                ascending: sortAscending,
+                showHidden: includeHidden
+            )
+            DispatchQueue.main.async {
+                guard let self,
+                      self.siblingScanGeneration == generation,
+                      self.currentURL.standardizedFileURL.path == std.path else { return }
+                self.siblingParentPath = parentPath
+                self.siblingFolders = siblings
+                if let idx = siblings.firstIndex(where: { $0.standardizedFileURL.path == std.path }) {
+                    self.siblingCurrentIndex = idx
+                    self.studioHeaderView.updateSiblingFolders(siblings, currentIndex: idx, parentName: parentDisplay)
+                } else {
+                    self.siblingCurrentIndex = 0
+                    self.studioHeaderView.updateSiblingFolders([], currentIndex: 0, parentName: parentDisplay)
+                }
+            }
+        }
+    }
+
+    @discardableResult
+    func navigateToSiblingFolder(delta: Int) -> Bool {
+        guard delta != 0 else { return false }
+        let std = currentURL.standardizedFileURL
+        guard !isRecentItemsView,
+              virtualTagTitle == nil,
+              virtualSearchTitle == nil,
+              virtualArchiveURL == nil,
+              std.path != "/" else { return false }
+
+        let parent = std.deletingLastPathComponent().standardizedFileURL
+        let parentPath = parent.path
+
+        // Если кэш соседей ещё не прогрет (например, нажали `]` сразу после запуска),
+        // синхронно подхватываем список соседей за ~1 мс.
+        if siblingParentPath != parentPath || siblingFolders.isEmpty {
+            let (sortKey, sortAscending) = siblingSortSpec(for: parent)
+            let loaded = Self.sortedSiblingFolders(
+                in: parent,
+                sortKey: sortKey,
+                ascending: sortAscending,
+                showHidden: showHiddenFiles
+            )
+            siblingParentPath = parentPath
+            siblingFolders = loaded
+            siblingCurrentIndex = loaded.firstIndex(where: { $0.standardizedFileURL.path == std.path }) ?? 0
+        }
+
+        guard siblingFolders.count > 1,
+              let currentIdx = siblingFolders.firstIndex(where: { $0.standardizedFileURL.path == std.path }) else {
+            return false
+        }
+
+        let targetIdx = currentIdx + delta
+        guard siblingFolders.indices.contains(targetIdx) else {
+            NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+            return false
+        }
+
+        let targetURL = siblingFolders[targetIdx]
+        siblingCurrentIndex = targetIdx
+        studioHeaderView.updateSiblingFolders(
+            siblingFolders,
+            currentIndex: targetIdx,
+            parentName: displayNameForParent(parent)
+        )
+        studioHeaderView.flashSiblingStep(delta: delta)
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        FPActionLog.action("соседняя папка \(delta > 0 ? "→" : "←")", targetURL.lastPathComponent)
+        navigate(to: targetURL, addingToHistory: true)
+        restoreKeyboardFocusAfterSiblingJump()
+        return true
+    }
+
+    func openSiblingFolder(_ url: URL) {
+        let std = url.standardizedFileURL
+        guard std.path != currentURL.standardizedFileURL.path else { return }
+        if let idx = siblingFolders.firstIndex(where: { $0.standardizedFileURL.path == std.path }) {
+            let delta = idx >= siblingCurrentIndex ? 1 : -1
+            siblingCurrentIndex = idx
+            studioHeaderView.flashSiblingStep(delta: delta)
+        }
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        FPActionLog.action("прыжок в соседнюю папку", std.lastPathComponent)
+        navigate(to: std, addingToHistory: true)
+        restoreKeyboardFocusAfterSiblingJump()
+    }
+
+    private func restoreKeyboardFocusAfterSiblingJump() {
+        guard let window else { return }
+        if window.firstResponder is NSTextView { return }
+        window.makeFirstResponder(viewMode == .list ? tableView : self)
+    }
+
+    /// Возвращает список реальных подпапок внутри `parent` в том же порядке
+    /// сортировки, что использует `FilePanel.sortItems()`.
+    static func sortedSiblingFolders(
+        in parent: URL,
+        sortKey: String,
+        ascending: Bool,
+        showHidden: Bool
+    ) -> [URL] {
+        let keys: [URLResourceKey] = [
+            .isDirectoryKey,
+            .isPackageKey,
+            .isHiddenKey,
+            .creationDateKey,
+            .contentModificationDateKey,
+            .localizedTypeDescriptionKey
+        ]
+        let options: FileManager.DirectoryEnumerationOptions = showHidden ? [] : [.skipsHiddenFiles]
+        guard let raw = try? FileManager.default.contentsOfDirectory(
+            at: parent,
+            includingPropertiesForKeys: keys,
+            options: options
+        ) else {
+            return []
+        }
+
+        struct Entry {
+            let url: URL
+            let name: String
+            let created: Date
+            let modified: Date
+            let kind: String
+        }
+
+        var folders: [Entry] = []
+        folders.reserveCapacity(raw.count)
+        for item in raw {
+            guard let values = try? item.resourceValues(forKeys: Set(keys)),
+                  values.isDirectory == true,
+                  values.isPackage != true else { continue }
+            if !showHidden && values.isHidden == true { continue }
+            folders.append(Entry(
+                url: item.standardizedFileURL,
+                name: item.lastPathComponent,
+                created: values.creationDate ?? Date.distantPast,
+                modified: values.contentModificationDate ?? Date.distantPast,
+                kind: values.localizedTypeDescription ?? ""
+            ))
+        }
+
+        folders.sort { left, right in
+            let result: ComparisonResult
+            switch sortKey {
+            case "created":
+                result = left.created.compare(right.created)
+            case "modified":
+                result = left.modified.compare(right.modified)
+            case "kind":
+                result = left.kind.localizedStandardCompare(right.kind)
+            default:
+                result = left.name.localizedStandardCompare(right.name)
+            }
+            if result == .orderedSame {
+                return left.name.localizedStandardCompare(right.name) == .orderedAscending
+            }
+            return ascending ? result == .orderedAscending : result == .orderedDescending
+        }
+
+        return folders.map(\.url)
     }
 }

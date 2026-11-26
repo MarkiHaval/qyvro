@@ -367,6 +367,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         historyForward.keyEquivalentModifierMask = [.command]
         let goUpItem = goMenu.addItem(withTitle: L("В родительскую папку", "Enclosing Folder"), action: #selector(goUp(_:)), keyEquivalent: "\u{F700}")
         goUpItem.keyEquivalentModifierMask = [.command]
+        let prevSiblingItem = goMenu.addItem(withTitle: L("Предыдущая соседняя папка", "Previous Sibling Folder"), action: #selector(goPreviousSiblingFolder(_:)), keyEquivalent: "\u{F702}")
+        prevSiblingItem.keyEquivalentModifierMask = [.option]
+        let nextSiblingItem = goMenu.addItem(withTitle: L("Следующая соседняя папка", "Next Sibling Folder"), action: #selector(goNextSiblingFolder(_:)), keyEquivalent: "\u{F703}")
+        nextSiblingItem.keyEquivalentModifierMask = [.option]
         let fuzzyJumpItem = goMenu.addItem(withTitle: L("Быстрый переход к папке…", "Fuzzy Jump to Folder…"), action: #selector(showFuzzyJump(_:)), keyEquivalent: "j")
         fuzzyJumpItem.keyEquivalentModifierMask = [.command]
         let recentsItem = goMenu.addItem(withTitle: L("Недавние файлы и папки", "Recent Files & Folders"), action: #selector(openRecents(_:)), keyEquivalent: "r")
@@ -527,6 +531,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             },
             FPCommandEntry(title: L("Проверить обновления…", "Check for Updates…"), subtitle: L("Проверить последний релиз Qyvro на GitHub", "Check latest Qyvro release on GitHub"), symbol: "arrow.triangle.2.circlepath") { [weak self] in self?.checkForUpdates(nil) },
             FPCommandEntry(title: L("Недавние файлы и папки", "Recent Files & Folders"), subtitle: L("Все новые загрузки и файлы по дате создания — ⌥⌘R", "Recently created and downloaded items — ⌥⌘R"), symbol: "clock.arrow.circlepath") { [weak self] in self?.openRecents(nil) },
+            FPCommandEntry(title: L("Предыдущая соседняя папка", "Previous Sibling Folder"), subtitle: L("Перейти к предыдущей папке на том же уровне — [ или ⌥←", "Jump to previous sibling folder — [ or ⌥←"), symbol: "chevron.left.circle") { [weak self] in self?.goPreviousSiblingFolder(nil) },
+            FPCommandEntry(title: L("Следующая соседняя папка", "Next Sibling Folder"), subtitle: L("Перейти к следующей папке на том же уровне — ] или ⌥→", "Jump to next sibling folder — ] or ⌥→"), symbol: "chevron.right.circle") { [weak self] in self?.goNextSiblingFolder(nil) },
             FPCommandEntry(title: L("Полка временного сбора", "Drop Shelf"), subtitle: L("Собрать файлы из разных папок и перенести пачкой — ⌥⌘S", "Stage files across folders and move, copy, or drag out — ⌥⌘S"), symbol: "tray.and.arrow.down") { [weak self] in self?.showDropShelf(nil) },
             FPCommandEntry(title: L("Где пропало место? / Дубликаты SHA-256", "Disk Analyzer & SHA-256 Duplicates"), subtitle: L("Анализ тяжёлых папок, файлов и точных дубликатов — ⌥⌘D", "Analyze large folders, heavy files, and exact duplicates — ⌥⌘D"), symbol: "chart.pie.fill") { [weak self] in self?.showDiskAnalyzer(nil) },
             FPCommandEntry(title: L("Новая вкладка", "New Tab"), subtitle: L("Открыть текущую папку в соседней вкладке", "Open current folder in a new tab"), symbol: "plus.square") { [weak self] in self?.activeWorkspace?.newTab(nil) },
@@ -670,6 +676,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc private func goBack(_ sender: Any?) { activeWorkspace?.goBack(sender) }
     @objc private func goForward(_ sender: Any?) { activeWorkspace?.goForward(sender) }
     @objc private func goUp(_ sender: Any?) { activeWorkspace?.goUp(sender) }
+    @objc private func goPreviousSiblingFolder(_ sender: Any?) { activeWorkspace?.goPreviousSiblingFolder(sender) }
+    @objc private func goNextSiblingFolder(_ sender: Any?) { activeWorkspace?.goNextSiblingFolder(sender) }
     @objc private func reload(_ sender: Any?) { activeWorkspace?.reload(sender) }
     @objc private func toggleHidden(_ sender: Any?) { activeWorkspace?.toggleHidden(sender) }
     @objc private func focusPath(_ sender: Any?) { activeWorkspace?.focusPath(sender) }
