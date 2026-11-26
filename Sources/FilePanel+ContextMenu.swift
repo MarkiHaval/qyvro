@@ -11,7 +11,7 @@ extension FilePanel {
     }
 
     func gridDragURLs(at point: NSPoint) -> [URL] {
-        guard viewMode == .largeIcons, let index = gridIndex(at: point) else { return [] }
+        guard !isArchiveMode, viewMode == .largeIcons, let index = gridIndex(at: point) else { return [] }
         if !gridSelectionIndexes.contains(index) {
             selectGridItem(at: index, extending: false)
         }
@@ -104,7 +104,18 @@ extension FilePanel {
 
     func contextMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(withTitle: "Открыть", action: #selector(openSelection(_:)), keyEquivalent: "")
+        if isArchiveMode {
+            menu.addItem(withTitle: L("Открыть", "Open"), action: #selector(openSelection(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: L("Быстрый просмотр", "Quick Preview"), action: #selector(quickLookSelection(_:)), keyEquivalent: "")
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(withTitle: L("Извлечь выбранное рядом с архивом", "Extract Selected Next to Archive"), action: #selector(extractSelectedArchiveEntriesNextToZip(_:)), keyEquivalent: "")
+            menu.addItem(withTitle: L("Извлечь в папку…", "Extract to Folder…"), action: #selector(extractSelectedArchiveEntriesToFolder(_:)), keyEquivalent: "")
+            menu.addItem(NSMenuItem.separator())
+            menu.addItem(withTitle: L("Выйти из архива", "Exit Archive"), action: #selector(exitArchiveMode(_:)), keyEquivalent: "")
+            for item in menu.items { item.target = self }
+            return menu
+        }
+        menu.addItem(withTitle: L("Открыть", "Open"), action: #selector(openSelection(_:)), keyEquivalent: "")
         if selectedItems.count == 1, selectedItems.first?.isDirectory == false {
             let openWithItem = NSMenuItem(title: "Открыть с помощью", action: nil, keyEquivalent: "")
             let openWithMenu = NSMenu()
@@ -195,7 +206,12 @@ extension FilePanel {
             if selectedItems.count == 1,
                selectedItems[0].url.pathExtension.lowercased() == "zip" {
                 menu.addItem(
-                    withTitle: "Распаковать ZIP в папку",
+                    withTitle: L("Открыть как папку (без распаковки)", "Browse Archive (No Unzip)"),
+                    action: #selector(browseSelectedZIP(_:)),
+                    keyEquivalent: ""
+                )
+                menu.addItem(
+                    withTitle: L("Распаковать ZIP в папку", "Unzip into Folder"),
                     action: #selector(extractSelectedZIP(_:)),
                     keyEquivalent: ""
                 )

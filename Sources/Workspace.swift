@@ -137,6 +137,10 @@ final class TabChip: FPLayerView {
     override func mouseDown(with event: NSEvent) {
         onSelect?()
         guard let window else { return }
+        let wasMovable = window.isMovable
+        window.isMovable = false
+        defer { window.isMovable = wasMovable }
+
         let startPointInWindow = event.locationInWindow
         var isDragging = false
 
@@ -376,6 +380,48 @@ struct FPWindowSession: Codable {
     var frameHeight: Double
 }
 
+private final class QyvroNoWindowDragView: NSView {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+private final class QyvroNoWindowDragStackView: NSStackView {
+    override var mouseDownCanMoveWindow: Bool { false }
+}
+
+/// Custom explorer window that prevents macOS titlebar window-dragging from
+/// hijacking `TabChip` drag gestures inside the top `.fullSizeContentView` strip.
+final class QyvroExplorerWindow: NSWindow {
+    private var lockedMovableForTabDrag = false
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .leftMouseDown,
+           let hit = contentView?.hitTest(event.locationInWindow),
+           Self.isInsideInteractiveTitlebarControl(hit) {
+            lockedMovableForTabDrag = true
+            isMovable = false
+        }
+        super.sendEvent(event)
+        if event.type == .leftMouseUp && lockedMovableForTabDrag {
+            lockedMovableForTabDrag = false
+            isMovable = true
+        }
+    }
+
+    private static func isInsideInteractiveTitlebarControl(_ view: NSView) -> Bool {
+        var current: NSView? = view
+        while let v = current {
+            if v is TabChip || v is QyvroTabStripScrollView || v is NSControl {
+                return true
+            }
+            if v is FPWindowZoomSpacer {
+                return false
+            }
+            current = v.superview
+        }
+        return false
+    }
+}
+
 final class FPWindowZoomSpacer: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
 
@@ -440,7 +486,7 @@ final class BrowserPane: NSView {
     weak var workspace: WorkspaceView?
 
     private let tabStrip = QyvroTabStripScrollView()
-    private let tabBar = NSStackView()
+    private let tabBar = QyvroNoWindowDragStackView()
     private let stageContainer = NSView()
     private let contentView = NSView()
     private var stageLeading: NSLayoutConstraint?
@@ -454,6 +500,7 @@ final class BrowserPane: NSView {
     private let studioDiskGauge = QyvroCircularGaugeButton(showPercentLabel: false)
     private weak var studioSettingsButton: NSButton?
     private weak var alwaysOnTopButton: NSButton?
+    private weak var clipboardToolbarButton: NSButton?
     private weak var shelfButton: QyvroShelfToolbarButton?
     private var shelfButtonWidthConstraint: NSLayoutConstraint?
     private var dropShelfObserver: NSObjectProtocol?
@@ -470,6 +517,17 @@ final class BrowserPane: NSView {
     var activePanel: FilePanel? {
         guard activeIndex >= 0 && activeIndex < tabs.count else { return nil }
         return tabs[activeIndex]
+    }
+
+    var tabURLs: [URL] {
+        tabs.map(\.currentURL)
+    }
+
+    func refreshLocalization() {
+        clipboardToolbarButton?.title = L("Буфер", "Clipboard")
+        updateShelfButton()
+        tabs.forEach { $0.refreshLocalization() }
+        rebuildTabs()
     }
 
     func refreshActivePanel(force: Bool = false) {
@@ -686,7 +744,7 @@ final class BrowserPane: NSView {
         tabBar.setContentHuggingPriority(NSLayoutConstraint.Priority(180), for: .horizontal)
         tabBar.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(190), for: .horizontal)
 
-        let tabDocument = NSView()
+        let tabDocument = QyvroNoWindowDragView()
         tabDocument.translatesAutoresizingMaskIntoConstraints = false
         tabDocument.addSubview(tabBar)
         tabStrip.documentView = tabDocument
@@ -734,11 +792,12 @@ final class BrowserPane: NSView {
             action: #selector(showCommandPalette(_:))
         )
         let clipboardButton = labeledIconButton(
-            title: "Буфер",
+            title: L("Буфер", "Clipboard"),
             symbol: "clipboard",
-            tooltip: "История буфера обмена (\(QyvroClipboardShortcut.displayName))",
+            tooltip: L("История буфера обмена (\(QyvroClipboardShortcut.displayName))", "Clipboard History (\(QyvroClipboardShortcut.displayName))"),
             action: #selector(showClipboard(_:))
         )
+        clipboardToolbarButton = clipboardButton
         let shelfBtn = makeShelfToolbarButton()
         shelfButton = shelfBtn
         let previewButton = iconButton(
@@ -950,7 +1009,7 @@ final class BrowserPane: NSView {
         let aurora = FPStyle.isObsidianAurora
         let count = QyvroDropShelfModule.shared.store.count
         let hasItems = count > 0
-        button.title = hasItems ? "Полка · \(count)" : "Полка"
+        button.title = hasItems ? L("Полка · \(count)", "Shelf · \(count)") : L("Полка", "Shelf")
         shelfButtonWidthConstraint?.constant = hasItems ? 84 : 66
         button.contentTintColor = hasItems
             ? FPStyle.accent
@@ -1772,8 +1831,8 @@ final class BrowserPane: NSView {
         }
 
         menu.addItem(.separator())
-        let folderStyleItem = NSMenuItem(title: "Стиль папок", action: nil, keyEquivalent: "")
-        let folderStyleSub = NSMenu(title: "Стиль папок")
+        let folderStyleItem = NSMenuItem(title: L("Стиль папок", "Folder Style"), action: nil, keyEquivalent: "")
+        let folderStyleSub = NSMenu(title: L("Стиль папок", "Folder Style"))
         for style in FPFolderIconStyle.allCases {
             let item = NSMenuItem(
                 title: style.title,
@@ -1789,57 +1848,60 @@ final class BrowserPane: NSView {
         menu.addItem(folderStyleItem)
 
         menu.addItem(.separator())
-        let v4Header = NSMenuItem(title: "Студия (V4 · новое)", action: nil, keyEquivalent: "")
+        let v4Header = NSMenuItem(title: L("Студия (V4 · новое)", "Studio (V4 · New)"), action: nil, keyEquivalent: "")
         v4Header.isEnabled = false
         menu.addItem(v4Header)
 
         for (index, preset) in FPThemePreset.all.enumerated() where preset.title.hasPrefix("Студия") {
             let item = NSMenuItem(
-                title: preset.title,
+                title: FPLocalization.localizedThemeTitle(preset.title),
                 action: #selector(selectThemePresetFromMenu(_:)),
                 keyEquivalent: ""
             )
             item.target = self
             item.tag = index
+            item.image = FPThemeSwatchRenderer.swatch(for: preset)
             menu.addItem(item)
         }
 
         menu.addItem(.separator())
-        let v3Header = NSMenuItem(title: "Аврора и Стекло (V3)", action: nil, keyEquivalent: "")
+        let v3Header = NSMenuItem(title: L("Аврора и Стекло (V3)", "Aurora & Glass (V3)"), action: nil, keyEquivalent: "")
         v3Header.isEnabled = false
         menu.addItem(v3Header)
 
         for (index, preset) in FPThemePreset.all.enumerated()
         where preset.styleVariant == .obsidianAurora && !preset.title.hasPrefix("Студия") {
             let item = NSMenuItem(
-                title: preset.title,
+                title: FPLocalization.localizedThemeTitle(preset.title),
                 action: #selector(selectThemePresetFromMenu(_:)),
                 keyEquivalent: ""
             )
             item.target = self
             item.tag = index
+            item.image = FPThemeSwatchRenderer.swatch(for: preset)
             menu.addItem(item)
         }
 
         menu.addItem(.separator())
-        let legacyHeader = NSMenuItem(title: "Прошлый дизайн и классика", action: nil, keyEquivalent: "")
+        let legacyHeader = NSMenuItem(title: L("Прошлый дизайн и классика", "Legacy & Classic"), action: nil, keyEquivalent: "")
         legacyHeader.isEnabled = false
         menu.addItem(legacyHeader)
 
         for (index, preset) in FPThemePreset.all.enumerated() where preset.styleVariant != .obsidianAurora {
             let item = NSMenuItem(
-                title: preset.title,
+                title: FPLocalization.localizedThemeTitle(preset.title),
                 action: #selector(selectThemePresetFromMenu(_:)),
                 keyEquivalent: ""
             )
             item.target = self
             item.tag = index
+            item.image = FPThemeSwatchRenderer.swatch(for: preset)
             menu.addItem(item)
         }
 
         menu.addItem(.separator())
         let openSettings = NSMenuItem(
-            title: "Все настройки оформления…",
+            title: L("Все настройки оформления…", "All Appearance Settings…"),
             action: #selector(openSettingsFromMenu(_:)),
             keyEquivalent: ""
         )
@@ -3644,6 +3706,26 @@ final class WorkspaceView: NSVisualEffectView, NSTextFieldDelegate, NSSplitViewD
         QyvroDiskAnalyzerModule.shared.show(rootURL: root)
     }
 
+    var activeFolderURL: URL {
+        activePanel?.currentURL ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    var openTabURLs: [URL] {
+        panes.flatMap(\.tabURLs)
+    }
+
+    func openURLInActivePanel(_ url: URL) {
+        (activePanel ?? activePane?.activePanel ?? panes.first?.activePanel)?.navigate(to: url)
+    }
+
+    func openURLInNewTab(_ url: URL) {
+        (activePane ?? panes.first)?.addTab(url: url, activate: true)
+    }
+
+    func refreshLocalization() {
+        panes.forEach { $0.refreshLocalization() }
+    }
+
     private func transferFromDropShelf(urls: [URL], move: Bool) -> Bool {
         guard let panel = activePanel ?? activePane?.activePanel ?? panes.first?.activePanel,
               let destination = panel.physicalDropDestinationURL else {
@@ -3779,7 +3861,7 @@ final class ExplorerWindowController: NSWindowController, NSWindowDelegate {
                 }
                 return visibleSomewhere ? frame : nil
             }
-        let window = NSWindow(
+        let window = QyvroExplorerWindow(
             contentRect: restoredFrame ?? NSRect(x: 0, y: 0, width: 1220, height: 760),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
@@ -3791,13 +3873,12 @@ final class ExplorerWindowController: NSWindowController, NSWindowDelegate {
         window.backgroundColor = NSColor.clear
         window.appearance = NSAppearance(named: .darkAqua)
         window.collectionBehavior = [.moveToActiveSpace, .fullScreenPrimary]
-        // Keep the controller's single explorer window reusable after the user
-        // presses the red close button. Global ⌘E can then show this exact window
-        // again instead of constructing a duplicate.
         window.isReleasedWhenClosed = false
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
-        window.isMovableByWindowBackground = true
+        // Window dragging is handled explicitly by `FPWindowZoomSpacer` and
+        // empty header space so tab drags in the top strip never hijack the window.
+        window.isMovableByWindowBackground = false
         if #available(macOS 11.0, *) {
             window.toolbarStyle = .unifiedCompact
         }

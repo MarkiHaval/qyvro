@@ -16,10 +16,10 @@ final class FPBatchRenameController: NSWindowController, NSTableViewDataSource, 
 
         var title: String {
             switch self {
-            case .replace: return "Замена"
-            case .template: return "Шаблон"
-            case .affix: return "Префикс / Суффикс"
-            case .transform: return "Регистр"
+            case .replace: return L("Замена", "Replace")
+            case .template: return L("Шаблон", "Template")
+            case .affix: return L("Префикс / Суффикс", "Prefix / Suffix")
+            case .transform: return L("Регистр", "Case")
             }
         }
     }
@@ -101,7 +101,7 @@ final class FPBatchRenameController: NSWindowController, NSTableViewDataSource, 
             backing: .buffered,
             defer: false
         )
-        panel.title = "Пакетное переименование"
+        panel.title = L("Пакетное переименование", "Batch Rename")
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
         panel.isMovableByWindowBackground = true
@@ -140,7 +140,7 @@ final class FPBatchRenameController: NSWindowController, NSTableViewDataSource, 
         root.translatesAutoresizingMaskIntoConstraints = true
         window.contentView = root
 
-        let headerTitle = NSTextField(labelWithString: "Пакетное переименование")
+        let headerTitle = NSTextField(labelWithString: L("Пакетное переименование", "Studio Batch Rename"))
         headerTitle.font = FPStyle.displayFont(ofSize: 17, weight: .semibold)
         headerTitle.textColor = FPStyle.text
         headerTitle.translatesAutoresizingMaskIntoConstraints = false
@@ -233,13 +233,13 @@ final class FPBatchRenameController: NSWindowController, NSTableViewDataSource, 
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        cancelButton.title = "Отмена"
+        cancelButton.title = L("Отмена", "Cancel")
         cancelButton.bezelStyle = .rounded
         cancelButton.keyEquivalent = "\u{1B}"
         cancelButton.target = self
         cancelButton.action = #selector(cancelPressed(_:))
 
-        applyButton.title = "Переименовать"
+        applyButton.title = L("Переименовать", "Rename")
         applyButton.bezelStyle = .rounded
         applyButton.keyEquivalent = "\r"
         applyButton.target = self
@@ -477,12 +477,12 @@ final class FPBatchRenameController: NSWindowController, NSTableViewDataSource, 
             statusLabel.stringValue = "Конфликт (\(errorRows.count)): \(msg) — «\(firstErr.newName)»"
             statusLabel.textColor = NSColor(calibratedRed: 0.96, green: 0.42, blue: 0.44, alpha: 1)
             applyButton.isEnabled = false
-            applyButton.title = "Переименовать"
+            applyButton.title = L("Переименовать", "Rename")
         } else if changedCount == 0 {
             statusLabel.stringValue = "Введите параметры — превью обновится сразу"
             statusLabel.textColor = FPStyle.dimText
             applyButton.isEnabled = false
-            applyButton.title = "Переименовать"
+            applyButton.title = L("Переименовать", "Rename")
         } else {
             statusLabel.stringValue = "Будет переименовано: \(changedCount) из \(rows.count) (отменяется ⌘Z)"
             statusLabel.textColor = FPStyle.accent

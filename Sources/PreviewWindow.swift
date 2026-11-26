@@ -2,6 +2,7 @@ import AVFoundation
 import Cocoa
 import ImageIO
 import Quartz
+import UniformTypeIdentifiers
 
 /// Просмотрщик Qyvro вместо системной панели Quick Look.
 ///
@@ -180,6 +181,7 @@ final class FPPreviewPane: NSView {
     var onActivate: ((FPPreviewPane) -> Void)?
     /// Верхняя панель окна обновляет надпись, когда кадр сменился.
     var onCaptionChanged: (() -> Void)?
+    var onGrabFrameRequested: (() -> Void)?
 
     var isFocused = false {
         didSet { updateFocusRing() }
@@ -268,7 +270,8 @@ final class FPPreviewPane: NSView {
         let currentGeneration = imageLoadGeneration
 
         let ext = url?.pathExtension.lowercased() ?? ""
-        let wantsDirectImage = url.map(QyvroPreviewImageCache.isDirectImage) ?? false
+        let isFont = url.map(FPFontPreviewRenderer.isFontURL) ?? false
+        let wantsDirectImage = isFont || (url.map(QyvroPreviewImageCache.isDirectImage) ?? false)
 
         // Готовые QL-кадры не выбрасываются, а откладываются: при листании
         // вперёд-назад по PDF/документам они не пересоздаются каждый раз.
@@ -328,10 +331,22 @@ final class FPPreviewPane: NSView {
             ])
             playerLayerView = layerView
             transportBar = bar
+            bar.onGrabFrame = { [weak self] in self?.onGrabFrameRequested?() }
+            bar.setShowsGrabFrame(FPMediaInfoCache.movieExtensions.contains(ext))
             bar.attach(to: avPlayer)
             // Открыл превью — значит хочет посмотреть/послушать, а не сперва
             // прицелиться в кнопку play.
             avPlayer.play()
+            nameText = url.lastPathComponent
+            refreshFlag()
+            refreshDetail(for: url)
+            return
+        }
+
+        if isFont {
+            let targetImageView = ensureImageView()
+            targetImageView.animates = false
+            targetImageView.image = FPFontPreviewRenderer.specimenImage(for: url)
             nameText = url.lastPathComponent
             refreshFlag()
             refreshDetail(for: url)
@@ -463,6 +478,87 @@ final class FPPreviewPane: NSView {
         transportBar?.toggleMute()
     }
 
+    var isShowingVideo: Bool {
+        guard let url, playerLayerView?.player != nil else { return false }
+        return FPMediaInfoCache.movieExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    func captureCurrentVideoFrame(completion: @escaping (Result<URL, Error>) -> Void) {
+        guard let url,
+              FPMediaInfoCache.movieExtensions.contains(url.pathExtension.lowercased()),
+              let player = playerLayerView?.player,
+              let asset = player.currentItem?.asset else {
+            completion(.failure(NSError(
+                domain: "QyvroPreview",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: L("Откройте видео, чтобы снять кадр.", "Open a video to grab a frame.")]
+            )))
+            return
+        }
+
+        let currentTime = player.currentTime()
+        let seconds = currentTime.isNumeric && currentTime.seconds.isFinite ? max(0, currentTime.seconds) : 0
+        let mins = Int(seconds) / 60
+        let secs = Int(seconds) % 60
+        let stamp = String(format: "%02d-%02d", mins, secs)
+        let stem = url.deletingPathExtension().lastPathComponent
+        let parent = url.deletingLastPathComponent()
+
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+
+        generator.generateCGImageAsynchronously(for: currentTime) { cgImage, _, error in
+            guard let cgImage else {
+                let err = error ?? NSError(
+                    domain: "QyvroPreview",
+                    code: 2,
+                    userInfo: [NSLocalizedDescriptionKey: L("Не удалось извлечь кадр.", "Could not extract video frame.")]
+                )
+                DispatchQueue.main.async { completion(.failure(err)) }
+                return
+            }
+
+            let fm = FileManager.default
+            var candidate = parent.appendingPathComponent("\(stem)_frame_\(stamp).png")
+            var suffix = 2
+            while fm.fileExists(atPath: candidate.path) {
+                candidate = parent.appendingPathComponent("\(stem)_frame_\(stamp)_\(suffix).png")
+                suffix += 1
+            }
+
+            guard let destination = CGImageDestinationCreateWithURL(
+                candidate as CFURL,
+                UTType.png.identifier as CFString,
+                1,
+                nil
+            ) else {
+                let err = NSError(
+                    domain: "QyvroPreview",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: L("Не удалось создать PNG-файл.", "Could not create PNG file.")]
+                )
+                DispatchQueue.main.async { completion(.failure(err)) }
+                return
+            }
+            CGImageDestinationAddImage(destination, cgImage, nil)
+            if CGImageDestinationFinalize(destination) {
+                DispatchQueue.main.async {
+                    QyvroFileOperationHistory.shared.recordCreated(candidate)
+                    completion(.success(candidate))
+                }
+            } else {
+                let err = NSError(
+                    domain: "QyvroPreview",
+                    code: 4,
+                    userInfo: [NSLocalizedDescriptionKey: L("Ошибка записи PNG-файла.", "Failed to write PNG file.")]
+                )
+                DispatchQueue.main.async { completion(.failure(err)) }
+            }
+        }
+    }
+
     func teardown() {
         imageLoadGeneration += 1
         imageView?.image = nil
@@ -520,11 +616,13 @@ final class FPMediaTransportBar: NSView {
     private let currentTimeLabel = NSTextField(labelWithString: "00:00")
     private let durationLabel = NSTextField(labelWithString: "00:00")
     private let scrubber = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let grabFrameButton = NSButton()
     private let muteButton = NSButton()
     private let volumeSlider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
 
     private weak var player: AVPlayer?
     private var timeObserver: Any?
+    var onGrabFrame: (() -> Void)?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -562,10 +660,20 @@ final class FPMediaTransportBar: NSView {
         scrubber.action = #selector(scrub)
         scrubber.translatesAutoresizingMaskIntoConstraints = false
 
+        grabFrameButton.isBordered = false
+        grabFrameButton.bezelStyle = .inline
+        grabFrameButton.imagePosition = .imageOnly
+        grabFrameButton.image = NSImage(systemSymbolName: "camera.fill", accessibilityDescription: L("Снять кадр в PNG", "Grab PNG frame"))
+        grabFrameButton.contentTintColor = FPStyle.orange
+        grabFrameButton.toolTip = L("Снять кадр в PNG (E)", "Grab PNG frame (E)")
+        grabFrameButton.target = self
+        grabFrameButton.action = #selector(grabFramePressed)
+        grabFrameButton.translatesAutoresizingMaskIntoConstraints = false
+
         muteButton.isBordered = false
         muteButton.bezelStyle = .inline
         muteButton.imagePosition = .imageOnly
-        muteButton.image = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: "Звук")
+        muteButton.image = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: L("Звук", "Sound"))
         muteButton.contentTintColor = FPStyle.text
         muteButton.target = self
         muteButton.action = #selector(toggleMute)
@@ -584,6 +692,7 @@ final class FPMediaTransportBar: NSView {
         addSubview(currentTimeLabel)
         addSubview(scrubber)
         addSubview(durationLabel)
+        addSubview(grabFrameButton)
         addSubview(muteButton)
         addSubview(volumeSlider)
 
@@ -606,9 +715,14 @@ final class FPMediaTransportBar: NSView {
             scrubber.trailingAnchor.constraint(equalTo: durationLabel.leadingAnchor, constant: -8),
             scrubber.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            durationLabel.trailingAnchor.constraint(equalTo: muteButton.leadingAnchor, constant: -12),
+            durationLabel.trailingAnchor.constraint(equalTo: grabFrameButton.leadingAnchor, constant: -10),
             durationLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
             durationLabel.widthAnchor.constraint(equalToConstant: 40),
+
+            grabFrameButton.trailingAnchor.constraint(equalTo: muteButton.leadingAnchor, constant: -8),
+            grabFrameButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            grabFrameButton.widthAnchor.constraint(equalToConstant: 20),
+            grabFrameButton.heightAnchor.constraint(equalToConstant: 20),
 
             muteButton.trailingAnchor.constraint(equalTo: volumeSlider.leadingAnchor, constant: -6),
             muteButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -619,6 +733,14 @@ final class FPMediaTransportBar: NSView {
             volumeSlider.centerYAnchor.constraint(equalTo: centerYAnchor),
             volumeSlider.widthAnchor.constraint(equalToConstant: 64)
         ])
+    }
+
+    func setShowsGrabFrame(_ shows: Bool) {
+        grabFrameButton.isHidden = !shows
+    }
+
+    @objc private func grabFramePressed() {
+        onGrabFrame?()
     }
 
     func attach(to player: AVPlayer) {
@@ -853,15 +975,16 @@ final class FPPreviewContentView: NSView {
     /// капсом. Кегль подобран так, чтобы читалось с рабочего расстояния.
     private static func hintText() -> NSAttributedString {
         let pairs = [
-            ("← →", "листать"),
-            ("S", "пауза"),
-            ("M", "звук"),
-            ("F", "отметить"),
-            ("⌫", "в корзину"),
-            ("C", "сравнение"),
-            ("V", "шторка"),
-            ("T", "во весь экран"),
-            ("Esc", "закрыть")
+            ("← →", L("листать", "browse")),
+            ("S", L("пауза", "play")),
+            ("M", L("звук", "mute")),
+            ("E", L("кадр PNG", "grab PNG")),
+            ("F", L("отметить", "mark")),
+            ("⌫", L("в корзину", "trash")),
+            ("C", L("сравнение", "compare")),
+            ("V", L("шторка", "wipe")),
+            ("T", L("во весь экран", "fullscreen")),
+            ("Esc", L("закрыть", "close"))
         ]
         let line = NSMutableAttributedString()
         for (index, pair) in pairs.enumerated() {
@@ -932,16 +1055,22 @@ final class FPPreviewContentView: NSView {
         copyHint.stringValue = ""
     }
 
+    func flashStatus(_ message: String) {
+        copyHint.stringValue = message.uppercased()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
+            if self?.copyHint.stringValue == message.uppercased() {
+                self?.copyHint.stringValue = ""
+            }
+        }
+    }
+
     @objc private func copyName(_ sender: Any?) {
         let name = nameButton.title
         guard !name.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(name, forType: .string)
         FPActionLog.action("имя файла скопировано", name)
-        copyHint.stringValue = "СКОПИРОВАНО"
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) { [weak self] in
-            self?.copyHint.stringValue = ""
-        }
+        flashStatus(L("скопировано", "copied"))
     }
 
     func setPanesHidden(_ hidden: Bool) {
@@ -1154,6 +1283,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         contentView.setPaneCount(paneCount) { [weak self] pane in
             pane.onToggleFlag = { [weak self] url in self?.toggleFlag(url) }
             pane.onCaptionChanged = { [weak self] in self?.refreshCaption() }
+            pane.onGrabFrameRequested = { [weak self] in self?.grabFocusedVideoFrame() }
             pane.onActivate = { [weak self] pane in
                 guard let self,
                       let position = self.contentView.panes.firstIndex(of: pane) else { return }
@@ -1225,9 +1355,9 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func updateTitle() {
-        let position = "\(focusedIndex + 1) из \(entries.count)"
+        let position = L("\(focusedIndex + 1) из \(entries.count)", "\(focusedIndex + 1) of \(entries.count)")
         window?.title = paneCount > 1
-            ? "\(position)  ·  сравнение \(paneCount)"
+            ? L("\(position)  ·  сравнение \(paneCount)", "\(position)  ·  compare \(paneCount)")
             : position
     }
 
@@ -1268,6 +1398,28 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     private func toggleMute() {
         guard contentView.panes.indices.contains(focusedPane) else { return }
         contentView.panes[focusedPane].toggleMute()
+    }
+
+    private func grabFocusedVideoFrame() {
+        guard contentView.panes.indices.contains(focusedPane) else { return }
+        let pane = contentView.panes[focusedPane]
+        guard pane.isShowingVideo else {
+            NSSound.beep()
+            return
+        }
+        pane.captureCurrentVideoFrame { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let savedURL):
+                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+                FPActionLog.action("кадр видео → PNG", savedURL.lastPathComponent)
+                self.contentView.flashStatus(L("кадр → \(savedURL.lastPathComponent)", "saved → \(savedURL.lastPathComponent)"))
+                self.onNeedsRefresh?()
+            case .failure:
+                NSSound.beep()
+                self.contentView.flashStatus(L("ошибка сохранения кадра", "frame grab failed"))
+            }
+        }
     }
 
     private func trashFocused() {
@@ -1429,6 +1581,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         case 3: focusedURL.map(toggleFlag)            // F
         case 1: togglePlayback()                      // S — пауза/воспроизведение
         case 46: toggleMute()                         // M — звук
+        case 14: grabFocusedVideoFrame()              // E — снять кадр видео в PNG
         case 8: cyclePaneCount()                      // C
         case 9: toggleCurtain()                       // V — шторка
         case 17: toggleMaximized()                    // T — на весь экран

@@ -586,6 +586,7 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     private var isHoveredState = false
     private var isSelectedState = false
     private var isCutState = false
+    private var configuredImageSize: CGFloat = 64
     private var representedPath: String?
     var itemIndex = 0
     var onSelect: ((Int, Bool, Bool) -> Void)?
@@ -628,6 +629,14 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
     func versionBadgeContains(_ point: NSPoint) -> Bool {
         guard !versionBadge.isHidden, let superview else { return false }
         return versionBadge.frame.contains(convert(point, from: superview))
+    }
+
+    override func layout() {
+        let targetW = bounds.width > 40 ? max(configuredImageSize, bounds.width - 12) : max(configuredImageSize, round(configuredImageSize * 1.12))
+        if abs(previewWidthConstraint.constant - targetW) > 0.5 {
+            previewWidthConstraint.constant = targetW
+        }
+        super.layout()
     }
 
     override func hitTest(_ point: NSPoint) -> NSView? {
@@ -866,14 +875,14 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
             versionBadge.widthAnchor.constraint(greaterThanOrEqualToConstant: 30),
             flagBadge.widthAnchor.constraint(equalToConstant: 20),
             flagBadge.heightAnchor.constraint(equalToConstant: 20),
-            titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
-            titleField.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 4),
-            titleField.heightAnchor.constraint(equalToConstant: 34),
-            kindField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 5),
-            kindField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -5),
+            titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
+            titleField.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 3),
+            titleField.heightAnchor.constraint(equalToConstant: 31),
+            kindField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+            kindField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -4),
             kindField.topAnchor.constraint(equalTo: titleField.bottomAnchor),
-            kindField.heightAnchor.constraint(equalToConstant: 14)
+            kindField.heightAnchor.constraint(equalToConstant: 13)
         ])
     }
 
@@ -975,11 +984,14 @@ final class FileGridCellView: FPLayerView, NSDraggingSource {
         setAccessibilityLabel(item.name)
         setAccessibilityHelp(item.isDirectory ? "Открыть папку" : "Открыть файл")
         // The preview slot must never change geometry after an asynchronous
-        // thumbnail arrives. NSImageView keeps the real image aspect ratio
-        // inside this stable square, so titles and every following row stay
-        // in exactly the same position as they had with the placeholder icon.
-        previewWidthConstraint.constant = imageSize
-        previewHeightConstraint.constant = imageSize
+        // thumbnail arrives. Filling the column slot width (minus crisp 12pt
+        // gutter) with a sleek 5:4/3:2 editorial height eliminates dead vertical
+        // gutters between columns and empty air above landscape media.
+        configuredImageSize = imageSize
+        let slotW = bounds.width > 40 ? max(imageSize, bounds.width - 12) : max(imageSize, round(imageSize * 1.12))
+        let slotH = FilePanel.previewBoxHeight(for: imageSize)
+        previewWidthConstraint.constant = slotW
+        previewHeightConstraint.constant = slotH
         // Переиспользованная ячейка обязана начинать с чистого состояния:
         // без hover-подсветки, без наследованных анимаций и масштаба иконки.
         isHoveredState = false
@@ -1182,14 +1194,16 @@ final class GridSectionHeaderView: FPLayerView {
         let hintColor = FPStyle.dimText.withAlphaComponent(aurora ? 0.50 : 0.55)
         scrollHint.font = hintFont
         scrollHint.attributedStringValue = NSAttributedString(
-            string: "⇧ + ПРОКРУТКА",
+            string: L("⇧ + ПРОКРУТКА", "⇧ + SCROLL"),
             attributes: [
                 .font: hintFont,
                 .foregroundColor: hintColor,
                 .kern: aurora ? 0.45 : 0.0
             ]
         )
-        let buttonTitle = expanded ? "Свернуть" : "Все (\(totalCount))"
+        let buttonTitle = expanded
+            ? L("Свернуть", "Collapse")
+            : L("Все (\(totalCount))", "All (\(totalCount))")
         let actionColor = aurora ? FPStyle.dimText.withAlphaComponent(0.86) : FPStyle.orange
         toggleButton.attributedTitle = NSAttributedString(
             string: buttonTitle,

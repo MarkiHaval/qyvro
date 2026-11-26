@@ -7,7 +7,7 @@ A native macOS file explorer built for people who work with large volumes of ima
 **Finder** answers *"where does this file live?"*
 **Qyvro** answers *"which of these 1,500 frames do I actually need — and what do I do with it next?"*
 
-> **macOS 13+** · **Universal (Apple Silicon & Intel)** · **Pure AppKit** (zero third-party dependencies) · **MIT License** · [Releases](../../releases) · [Build from source](#build-from-source)
+> **macOS 13+** · **Universal (Apple Silicon & Intel)** · **Pure AppKit** (zero third-party dependencies) · **English & Russian UI** · **MIT License** · **[Download Latest Release (v2.0)](../../releases/latest)** · [Build from source](#build-from-source)
 
 ---
 
@@ -24,8 +24,9 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 ### Studio V4 Workspace & Customizable Look
 
 - **4 switchable window layouts (`⌃⌘L`)**: **Studio · Island (V4)** (frameless floating canvas with unified hero header and recessed filter tray), **Podium · Bottom Dock**, **Edge Rail**, and **Classic Sidebar**.
-- **17 built-in themes**: Ships by default in **Aurora · Horizon (V3)** (warm obsidian glass with sunset amber atmosphere), alongside Studio V4 (*Titanium*, *Noir Amber*, *Malachite*), Aurora & Vision Glass V3, and Classic palettes. Full live controls for surface opacity, colors, grid density, and gesture sensitivity.
+- **17 built-in themes with Deep-Glow + film grain backdrop**: Ships by default in **Aurora · Horizon (V3)** (warm obsidian glass with optical sunset Deep-Glow bloom and organic micro-grain), alongside Studio V4 (*Titanium*, *Noir Amber*, *Malachite*), Aurora & Vision Glass V3, and Classic palettes — with live color swatches in every theme menu.
 - **3 minimalist 2-plane folder styles**: *Graphite + Spine*, *Dark Satin*, and *Swiss Seam* — plus custom per-folder colors, Finder tags, and editorial typography (`Avenir Next` + tabular `SF Mono`).
+- **Bilingual UI (English / Russian)**: Automatically adapts to your macOS language with instant live switching in Settings (`Auto / English / Русский`).
 - **Per-folder view & sort profiles**: Independently remembers thumbnail scale, grid/list mode, and sort order for each folder you customize.
 
 ### Visual Grid Built for Media
@@ -43,6 +44,8 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 ### Cull Hundreds of Frames in Minutes
 
 - **Built-in viewer (`Space`)**: Instant full-resolution preview with arrow-key browsing. Video and audio autoplay immediately and remember your volume/mute state.
+- **Grab exact video frame to PNG (`E`)**: Extracts the current video frame at lossless full resolution directly next to the video (`<name>_frame_MM-SS.png`, Display P3 preserved, undoable with `⌘Z`) — or click the camera button on the transport bar.
+- **Editorial font preview**: `.ttf`, `.otf`, `.ttc`, and `.dfont` files render live typographic `"Aa"` thumbnail cards in the grid and a full multi-size specimen sheet on `Space`.
 - **Side-by-side comparison (`C`)** & **Split Wipe curtain (`V`)**: Compare 2–3 frames next to each other, or overlay two images with an interactive draggable split divider to inspect grades, crops, and upscales.
 - **Two-stage native Finder marking (`F`)**: Cycles through *Candidate* (pink corner dot) → *Picked* (green dot) → clear. Stored as real macOS Finder tags inside file extended attributes — survives renames, moves, and Spotlight searches. Also clickable directly on thumbnail corners.
 - **Drop Shelf (`⌥⌘S`)**: A floating staging tray to gather files from multiple folders, preview the selection, and move, copy, or batch-drag everything out into Figma, a browser, or another folder (hold `⌥` while dragging to export compressed JPEGs on the fly).
@@ -61,6 +64,11 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 
 ### Navigation & Speed
 
+- **Paste clipboard directly to file (`⌘V`)**: Copy any screenshot, Figma frame, browser image, or text snippet and press `⌘V` inside any folder to save it instantly as `Clipboard_YYYY-MM-DD_HH-mm-ss.png` (or `.txt`), with full `⌘Z` Undo.
+- **Browse `.zip` archives as folders (no unzip)**: Press `Enter` or double-click any `.zip` to explore nested folders and preview files with `Space` without extracting gigabytes — then extract just the items you need.
+- **Fuzzy Folder Jump (`⌘J`)**: Keyboard-first instant jump across bookmarks, open tabs, recent folders, and nearby subfolders (`Enter` opens here, `⌘Enter` opens in a new tab).
+- **Subtle Git branch badge**: Inside Git repositories, the Studio header quietly displays the active branch and modified file count (`⎇ main · 3`) without cluttering media folders.
+- **Silent update checker**: Manually check for newer GitHub Releases from Settings or the App menu — zero background phoning home.
 - **Two-finger swipe Back / Forward** with a hardware-accelerated Display P3 wave transition (zero color shift or flash).
 - **Command Palette (`⌘K`)**: Keyboard-first launcher (`↑`/`↓`/`Enter`/`Esc`) for actions, layouts, themes, folder styles, and tools.
 - **Split Panes (`⌘D`), Tabs (`⌘T`, `⌘1`–`⌘9`, `⌘⇧T`), Bookmarks & Saved Tab Groups**.
@@ -77,6 +85,7 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 |---|---|
 | `Space` | Open built-in media viewer |
 | `⌘E` | Global summon / hide Qyvro |
+| `⌘J` | Fuzzy Jump to Folder (`⌘↵` opens in new tab) |
 | `⌘K` | Command Palette |
 | `⌥⌘S` | Toggle Drop Shelf |
 | `⌥⌘D` | Disk Analyzer & SHA-256 Duplicates |
@@ -88,6 +97,7 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 | `⌘D` | Split pane |
 | `⌘F` | Focus search (Folder / Mac Spotlight) |
 | `⌘Z` / `⌘⇧Z` | Undo / Redo file operations |
+| `⌘V` | Paste files — or save clipboard image/text directly as `.png`/`.txt` |
 | `⌘⌫` | Move selection to Trash |
 | `⌘↑` / `⌘←` / `⌘→` | Parent folder / Back / Forward |
 | `Shift + scroll` | Scroll collapsed date row horizontally |
@@ -104,6 +114,7 @@ Qyvro is engineered specifically for heavy visual folders — native AppKit, Dis
 | `C` | Side-by-side comparison (2–3 frames) |
 | `V` | Interactive split wipe curtain |
 | `S` / `M` | Play / Pause video & audio · Mute / Unmute |
+| `E` | Grab current video frame to lossless PNG |
 | `⌫` | Move to Trash and advance to next frame |
 | `T` / `Esc` | Toggle fullscreen · Close viewer |
 

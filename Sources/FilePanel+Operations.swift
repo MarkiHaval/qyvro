@@ -5,10 +5,91 @@ extension FilePanel {
     @objc func openSelection(_ sender: Any?) {
         activate()
         guard let item = selectedItems.first else { return }
+        if let archiveURL = virtualArchiveURL {
+            guard let entryPath = virtualArchiveEntryByURL[item.url.path] else { return }
+            if item.isDirectory {
+                openZipArchive(archiveURL, internalPath: entryPath)
+            } else {
+                QyvroZipArchiveService.shared.extractEntryToTempCache(entryPath: entryPath, from: archiveURL) { extracted in
+                    if let extracted {
+                        NSWorkspace.shared.open(extracted)
+                    } else {
+                        NSSound.beep()
+                    }
+                }
+            }
+            return
+        }
         if item.isDirectory {
             navigate(to: item.url)
+        } else if item.url.pathExtension.lowercased() == "zip" {
+            openZipArchive(item.url)
         } else {
             NSWorkspace.shared.open(item.url)
+        }
+    }
+
+    @objc func browseSelectedZIP(_ sender: Any?) {
+        activate()
+        guard let item = selectedItems.first,
+              !item.isDirectory,
+              item.url.pathExtension.lowercased() == "zip" else { return }
+        openZipArchive(item.url)
+    }
+
+    @objc func exitArchiveMode(_ sender: Any?) {
+        activate()
+        guard let archiveURL = virtualArchiveURL else { return }
+        navigate(to: archiveURL.deletingLastPathComponent())
+    }
+
+    @objc func extractSelectedArchiveEntriesNextToZip(_ sender: Any?) {
+        activate()
+        guard let archiveURL = virtualArchiveURL else { return }
+        let selectedPaths = selectedItems.compactMap { virtualArchiveEntryByURL[$0.url.path] }
+        guard !selectedPaths.isEmpty else { NSSound.beep(); return }
+        let baseName = archiveURL.deletingPathExtension().lastPathComponent
+        let destRoot = uniqueDestination(
+            for: archiveURL.deletingLastPathComponent().appendingPathComponent(baseName, isDirectory: true),
+            in: archiveURL.deletingLastPathComponent()
+        )
+        QyvroZipArchiveService.shared.extractEntries(selectedPaths, from: archiveURL, to: destRoot) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let count):
+                self.showToast(
+                    L("Извлечено объектов: \(count) → \(destRoot.lastPathComponent)", "Extracted \(count) items → \(destRoot.lastPathComponent)"),
+                    symbol: "arrow.up.doc.fill"
+                )
+            case .failure(let error):
+                self.showError(error.localizedDescription)
+            }
+        }
+    }
+
+    @objc func extractSelectedArchiveEntriesToFolder(_ sender: Any?) {
+        activate()
+        guard let archiveURL = virtualArchiveURL else { return }
+        let selectedPaths = selectedItems.compactMap { virtualArchiveEntryByURL[$0.url.path] }
+        guard !selectedPaths.isEmpty else { NSSound.beep(); return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.prompt = L("Извлечь сюда", "Extract Here")
+        panel.directoryURL = archiveURL.deletingLastPathComponent()
+        guard panel.runModal() == .OK, let dest = panel.url else { return }
+        QyvroZipArchiveService.shared.extractEntries(selectedPaths, from: archiveURL, to: dest) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let count):
+                self.showToast(
+                    L("Извлечено объектов: \(count)", "Extracted \(count) items"),
+                    symbol: "arrow.up.doc.fill"
+                )
+            case .failure(let error):
+                self.showError(error.localizedDescription)
+            }
         }
     }
 
@@ -26,6 +107,26 @@ extension FilePanel {
 
     @objc func quickLookSelection(_ sender: Any?) {
         activate()
+        if let archiveURL = virtualArchiveURL {
+            guard let selected = selectedItems.first, !selected.isDirectory,
+                  let entryPath = virtualArchiveEntryByURL[selected.url.path] else {
+                NSSound.beep()
+                return
+            }
+            QyvroZipArchiveService.shared.extractEntryToTempCache(entryPath: entryPath, from: archiveURL) { [weak self] extracted in
+                guard let self, let extracted else { NSSound.beep(); return }
+                let request = FPQuickLookRequest(
+                    entries: [FPQuickLookGalleryEntry(url: extracted, visualIndex: 0)],
+                    initialIndex: 0,
+                    columnCount: 1,
+                    onIndexChanged: { _ in },
+                    opensAsCurtain: false,
+                    curtainSecondIndex: nil
+                )
+                self.onQuickLook?(request)
+            }
+            return
+        }
         if let item = selectedItems.first, selectedItems.count == 1, item.isDirectory {
             if folderPocketController == nil {
                 let controller = FolderPocketController(parentView: self)
@@ -361,15 +462,96 @@ extension FilePanel {
 
     @objc func pasteFiles(_ sender: Any?) {
         activate()
+        guard !isRecentItemsView, virtualTagTitle == nil, virtualSearchTitle == nil, !isArchiveMode else {
+            NSSound.beep()
+            return
+        }
         let pasteboard = NSPasteboard.general
         let urls = fileURLs(from: pasteboard)
-        guard !urls.isEmpty else { NSSound.beep(); return }
-        let cutting = pasteboard.string(forType: cutPasteboardType) == "1"
-        startTransfer(urls: urls, to: currentURL, move: cutting)
-        if cutting {
-            FPCutFileState.shared.clear()
-            pasteboard.clearContents()
+        if !urls.isEmpty {
+            let cutting = pasteboard.string(forType: cutPasteboardType) == "1"
+            startTransfer(urls: urls, to: currentURL, move: cutting)
+            if cutting {
+                FPCutFileState.shared.clear()
+                pasteboard.clearContents()
+            }
+            return
         }
+        if !pasteClipboardContentAsFile(from: pasteboard) {
+            NSSound.beep()
+        }
+    }
+
+    @discardableResult
+    func pasteClipboardContentAsFile(from pasteboard: NSPasteboard) -> Bool {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        let stamp = formatter.string(from: Date())
+
+        // 1. Изображение из буфера (скриншот, браузер, Figma, Telegram) → lossless PNG.
+        if let pngData = extractPNGData(from: pasteboard) {
+            let template = currentURL.appendingPathComponent("Clipboard_\(stamp).png")
+            let destination = uniqueDestination(for: template, in: currentURL)
+            do {
+                try pngData.write(to: destination, options: .atomic)
+                QyvroFileOperationHistory.shared.recordCreated(destination)
+                FPActionLog.action("вставка картинки из буфера", destination.lastPathComponent)
+                DirectorySnapshotCache.shared.invalidate(currentURL)
+                loadCurrentDirectory()
+                select(url: destination)
+                showToast(
+                    L("Сохранено из буфера: \(destination.lastPathComponent)", "Saved from clipboard: \(destination.lastPathComponent)"),
+                    symbol: "photo.badge.plus",
+                    withUndo: true
+                )
+                return true
+            } catch {
+                showError(error.localizedDescription)
+                return false
+            }
+        }
+
+        // 2. Текст из буфера → UTF-8 .txt файл.
+        if let text = pasteboard.string(forType: .string),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let data = text.data(using: .utf8) {
+            let template = currentURL.appendingPathComponent("Clipboard_\(stamp).txt")
+            let destination = uniqueDestination(for: template, in: currentURL)
+            do {
+                try data.write(to: destination, options: .atomic)
+                QyvroFileOperationHistory.shared.recordCreated(destination)
+                FPActionLog.action("вставка текста из буфера", destination.lastPathComponent)
+                DirectorySnapshotCache.shared.invalidate(currentURL)
+                loadCurrentDirectory()
+                select(url: destination)
+                showToast(
+                    L("Сохранено из буфера: \(destination.lastPathComponent)", "Saved from clipboard: \(destination.lastPathComponent)"),
+                    symbol: "doc.text.fill",
+                    withUndo: true
+                )
+                return true
+            } catch {
+                showError(error.localizedDescription)
+                return false
+            }
+        }
+        return false
+    }
+
+    private func extractPNGData(from pasteboard: NSPasteboard) -> Data? {
+        if let rawPNG = pasteboard.data(forType: .png), !rawPNG.isEmpty {
+            return rawPNG
+        }
+        if let image = NSImage(pasteboard: pasteboard),
+           let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            let rep = NSBitmapImageRep(cgImage: cgImage)
+            return rep.representation(using: .png, properties: [:])
+        }
+        if let tiff = pasteboard.data(forType: .tiff),
+           let rep = NSBitmapImageRep(data: tiff) {
+            return rep.representation(using: .png, properties: [:])
+        }
+        return nil
     }
 
     func writeFilesToPasteboard(cutting: Bool) {

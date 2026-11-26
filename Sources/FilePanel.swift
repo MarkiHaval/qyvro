@@ -63,6 +63,8 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let tagKey: String?
         let tagTitle: String?
         var isRecents: Bool = false
+        var archiveURL: URL? = nil
+        var archiveInternalPath: String? = nil
     }
 
     let pathField = CenteredTextField()
@@ -85,13 +87,15 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     var gridFilter: FPGridFilter = .all
     let swipeIndicator = SwipeNavigationIndicator(frame: NSRect(x: 0, y: 0, width: 66, height: 68))
     let swipeWaveOverlay = SwipeSurfaceWaveView()
-    let sortOptions: [(title: String, key: String)] = [
-        ("Имя", "name"),
-        ("Создан", "created"),
-        ("Тип", "kind"),
-        ("Дата изменения", "modified"),
-        ("Размер", "size")
-    ]
+    var sortOptions: [(title: String, key: String)] {
+        [
+            (L("Имя", "Name"), "name"),
+            (L("Создан", "Created"), "created"),
+            (L("Тип", "Kind"), "kind"),
+            (L("Дата изменения", "Modified"), "modified"),
+            (L("Размер", "Size"), "size")
+        ]
+    }
     var modeButtons: [NSButton] = []
     var navToolbarButtons: [NSButton] = []
     let studioHeaderView = QyvroStudioHeaderView()
@@ -173,6 +177,10 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     var virtualTagKey: String?
     var virtualTagTitle: String?
     var virtualSearchTitle: String?
+    var virtualArchiveURL: URL?
+    var virtualArchiveInternalPath: String = ""
+    var virtualArchiveEntryByURL: [String: String] = [:]
+    var isArchiveMode: Bool { virtualArchiveURL != nil }
     let horizontalSwipeTracker = HorizontalSwipeTracker()
     var iconResizeWorkItem: DispatchWorkItem?
     var gridResizeWorkItem: DispatchWorkItem?
@@ -228,6 +236,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     var onSelectionChanged: (([FileItem]) -> Void)?
 
     var tabIconSymbol: String {
+        if isArchiveMode { return "doc.zipper" }
         if isRecentItemsView { return "clock.arrow.circlepath" }
         if virtualTagTitle != nil { return "tag.fill" }
         if virtualSearchTitle != nil { return "magnifyingglass" }
@@ -250,20 +259,27 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     }
 
     var tabTitle: String {
+        if let archiveURL = virtualArchiveURL {
+            let trimmed = virtualArchiveInternalPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if !trimmed.isEmpty {
+                return URL(fileURLWithPath: trimmed).lastPathComponent
+            }
+            return archiveURL.lastPathComponent
+        }
         if let virtualSearchTitle {
-            return virtualSearchTitle
+            return isRecentItemsView ? L("Недавние", "Recents") : virtualSearchTitle
         }
         if let virtualTagTitle {
             return virtualTagTitle
         }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if currentURL.path == home { return "Дом" }
+        if currentURL.path == home { return L("Дом", "Home") }
         let name = currentURL.lastPathComponent
         return name.isEmpty ? "/" : name
     }
 
     var physicalDropDestinationURL: URL? {
-        guard virtualTagTitle == nil, virtualSearchTitle == nil else { return nil }
+        guard !isArchiveMode, !isRecentItemsView, virtualTagTitle == nil, virtualSearchTitle == nil else { return nil }
         return currentURL.standardizedFileURL
     }
 
@@ -530,9 +546,11 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
 
     private func updateContentStackInsets() {
         if isStudioLayoutMode {
-            rootContentStack?.edgeInsets = NSEdgeInsets(top: 12, left: 16, bottom: 10, right: 16)
+            rootContentStack?.spacing = 4
+            rootContentStack?.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 8, right: 12)
         } else {
-            rootContentStack?.edgeInsets = NSEdgeInsets(top: 8, left: 10, bottom: 8 + floatingDockBottomClearance, right: 10)
+            rootContentStack?.spacing = 6
+            rootContentStack?.edgeInsets = NSEdgeInsets(top: 6, left: 10, bottom: 8 + floatingDockBottomClearance, right: 10)
         }
     }
 
@@ -540,19 +558,29 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let home = fileManager.homeDirectoryForCurrentUser.standardizedFileURL
         let title: String
         let parentSubtitle: String?
-        if isRecentItemsView {
-            title = "Недавние"
+        if let archiveURL = virtualArchiveURL {
+            let trimmed = virtualArchiveInternalPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if trimmed.isEmpty {
+                title = archiveURL.lastPathComponent
+                parentSubtitle = archiveURL.deletingLastPathComponent().lastPathComponent
+            } else {
+                let parts = trimmed.split(separator: "/")
+                title = String(parts.last ?? Substring(trimmed))
+                parentSubtitle = parts.count > 1 ? String(parts[parts.count - 2]) : archiveURL.lastPathComponent
+            }
+        } else if isRecentItemsView {
+            title = L("Недавние", "Recents")
             parentSubtitle = nil
         } else if let virtualSearchTitle {
             title = virtualSearchTitle
             parentSubtitle = nil
         } else if let virtualTagTitle {
             title = virtualTagTitle
-            parentSubtitle = "Теги"
+            parentSubtitle = L("Теги", "Tags")
         } else {
             let std = currentURL.standardizedFileURL
             if std.path == home.path {
-                title = "Дом"
+                title = L("Дом", "Home")
                 parentSubtitle = nil
             } else if std.path == "/" {
                 title = "Macintosh HD"
@@ -561,7 +589,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
                 title = std.lastPathComponent
                 let parent = std.deletingLastPathComponent().standardizedFileURL
                 if parent.path == home.path {
-                    parentSubtitle = "Дом"
+                    parentSubtitle = L("Дом", "Home")
                 } else if parent.path == "/" {
                     parentSubtitle = "Macintosh HD"
                 } else {
@@ -815,6 +843,9 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         studioHeaderView.onShowVolumesMenu = { [weak self] anchor in self?.onStudioShowVolumesMenu?(anchor) }
         studioHeaderView.onShowBookmarksMenu = { [weak self] anchor in self?.onStudioShowBookmarksMenu?(anchor) }
         studioHeaderView.onShowTagsMenu = { [weak self] anchor in self?.onStudioShowTagsMenu?(anchor) }
+        studioHeaderView.onFuzzyJump = {
+            NSApp.sendAction(#selector(AppDelegate.showFuzzyJump(_:)), to: nil, from: nil)
+        }
         studioHeaderView.onPickFilter = { [weak self] filter in self?.applyFilterFromSidebar(filter) }
         studioHeaderView.onSearchTextChanged = { [weak self] text in self?.onStudioSearchChanged?(text) }
         studioHeaderView.onToggleSearchScope = { [weak self] in self?.onStudioToggleSearchScope?() }
@@ -1185,20 +1216,23 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         let selected = selection.count
         let folders = filteredItems.filter { $0.isDirectory }.count
         let files = filteredItems.count - folders
-        var text = "\(filteredItems.count) элементов - \(folders) папок - \(files) файлов"
+        var text = L(
+            "\(filteredItems.count) элементов - \(folders) папок - \(files) файлов",
+            "\(filteredItems.count) items · \(folders) folders · \(files) files"
+        )
         if selected > 0 {
             let selectedBytes = selection.reduce(Int64(0)) { partial, item in
                 partial + (item.isDirectory ? 0 : (item.size ?? 0))
             }
             if selectedBytes > 0 {
-                text += " - выбрано \(selected) (\(byteString(selectedBytes)))"
+                text += L(
+                    " - выбрано \(selected) (\(byteString(selectedBytes)))",
+                    " · \(selected) selected (\(byteString(selectedBytes)))"
+                )
             } else {
-                text += " - выбрано \(selected)"
+                text += L(" - выбрано \(selected)", " · \(selected) selected")
             }
         }
-        // Счёт идёт по дате изменения файла: отметка ставится в момент
-        // разбора, поэтому «отмечено сегодня» и «разобрано сегодня» — это про
-        // одни и те же файлы. Считается по видимой папке, без обхода диска.
         let flaggedToday = filteredItems.filter { item in
             guard !item.isDirectory,
                   FPFinderTagStore.isFlagged(item.finderTags ?? []),
@@ -1206,7 +1240,7 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
             return Calendar.current.isDateInToday(modified)
         }.count
         if flaggedToday > 0 {
-            text += " - ★ сегодня: \(flaggedToday)"
+            text += L(" - ★ сегодня: \(flaggedToday)", " · ★ today: \(flaggedToday)")
         }
         return text
     }
@@ -1217,13 +1251,13 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
 
     func showToast(_ message: String, symbol: String = "checkmark.circle.fill", withUndo: Bool = false) {
         if withUndo && QyvroFileOperationHistory.shared.canUndo {
-            toastBanner.show(message: message, symbol: symbol, undoTitle: "Отменить ⌘Z") { [weak self] in
+            toastBanner.show(message: message, symbol: symbol, undoTitle: L("Отменить ⌘Z", "Undo ⌘Z")) { [weak self] in
                 QyvroFileOperationHistory.shared.performUndo { result in
                     switch result {
                     case .success(let dirs):
                         dirs.forEach { DirectorySnapshotCache.shared.invalidate($0) }
                         self?.refreshCurrentDirectory(force: true)
-                        self?.showToast("Действие отменено", symbol: "arrow.uturn.backward.circle.fill")
+                        self?.showToast(L("Действие отменено", "Action undone"), symbol: "arrow.uturn.backward.circle.fill")
                     case .failure(let err):
                         self?.showError(err.localizedDescription)
                     }
@@ -1232,6 +1266,21 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         } else {
             toastBanner.show(message: message, symbol: symbol)
         }
+    }
+
+    func refreshLocalization() {
+        studioHeaderView.refreshLocalization()
+        syncStudioHeader()
+        footerLabel.stringValue = footerText()
+        syncSortControl()
+        syncFilterControl()
+        updateViewScaleButton()
+        cachedDateSections = nil
+        invalidateGridRenderCache()
+        rebuildGridViews()
+        tableView.reloadData()
+        updateEmptyState(isLoading: false)
+        selectionActionBar.update(selectedItems: selectedItems)
     }
 
     func updateEmptyState(isLoading: Bool = false) {
@@ -1243,9 +1292,12 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         if hasQuery {
             emptyStateView.configure(
                 symbol: "magnifyingglass",
-                title: "Ничего не найдено",
-                subtitle: "По запросу «\(searchField.stringValue)» нет совпадений в этой папке",
-                actionTitle: "Очистить поиск"
+                title: L("Ничего не найдено", "No Matches Found"),
+                subtitle: L(
+                    "По запросу «\(searchField.stringValue)» нет совпадений в этой папке",
+                    "No items matching \"\(searchField.stringValue)\" in this folder"
+                ),
+                actionTitle: L("Очистить поиск", "Clear Search")
             )
             emptyStateView.onPrimaryAction = { [weak self] in
                 self?.searchField.stringValue = ""
@@ -1255,43 +1307,56 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
         } else if gridFilter != .all {
             emptyStateView.configure(
                 symbol: "line.3.horizontal.decrease.circle",
-                title: "Нет подходящих файлов",
-                subtitle: "В этой папке нет объектов для выбранного фильтра «\(gridFilter.title)»",
-                actionTitle: "Показать все"
+                title: L("Нет подходящих файлов", "No Matching Items"),
+                subtitle: L(
+                    "В этой папке нет объектов для выбранного фильтра «\(gridFilter.title)»",
+                    "No items match the active filter \"\(gridFilter.title)\""
+                ),
+                actionTitle: L("Показать все", "Show All")
             )
             emptyStateView.onPrimaryAction = { [weak self] in
                 self?.applyFilterFromSidebar(.all)
             }
+        } else if isArchiveMode {
+            emptyStateView.configure(
+                symbol: "doc.zipper",
+                title: L("В этой папке архива пусто", "Empty Archive Folder"),
+                subtitle: L("Нажмите ⌘↑, чтобы вернуться выше", "Press ⌘↑ to go up one level"),
+                actionTitle: L("Выйти из архива", "Exit Archive")
+            )
+            emptyStateView.onPrimaryAction = { [weak self] in
+                self?.exitArchiveMode(nil)
+            }
         } else if isRecentItemsView {
             emptyStateView.configure(
                 symbol: "clock.arrow.circlepath",
-                title: "Недавних файлов пока нет",
-                subtitle: "Новые загрузки и созданные файлы появятся здесь автоматически",
+                title: L("Недавних файлов пока нет", "No Recent Files Yet"),
+                subtitle: L("Новые загрузки и созданные файлы появятся здесь автоматически", "New downloads and created files will appear here automatically"),
                 actionTitle: nil
             )
             emptyStateView.onPrimaryAction = nil
         } else if virtualTagTitle != nil {
             emptyStateView.configure(
                 symbol: "tag",
-                title: "Нет объектов с этим тегом",
-                subtitle: "Перетащи файлы или папки на тег, чтобы собрать их здесь",
+                title: L("Нет объектов с этим тегом", "No Items With This Tag"),
+                subtitle: L("Перетащи файлы или папки на тег, чтобы собрать их здесь", "Drag files or folders onto a tag to collect them here"),
                 actionTitle: nil
             )
             emptyStateView.onPrimaryAction = nil
         } else if virtualSearchTitle != nil {
             emptyStateView.configure(
                 symbol: "magnifyingglass",
-                title: "На Mac ничего не найдено",
-                subtitle: "Попробуй изменить запрос или искать внутри текущей папки",
+                title: L("На Mac ничего не найдено", "Nothing Found on Mac"),
+                subtitle: L("Попробуй изменить запрос или искать внутри текущей папки", "Try another query or search inside the current folder"),
                 actionTitle: nil
             )
             emptyStateView.onPrimaryAction = nil
         } else {
             emptyStateView.configure(
                 symbol: "folder",
-                title: "Папка пуста",
-                subtitle: "Перетащи сюда файлы или создай новую папку",
-                actionTitle: "Новая папка"
+                title: L("Папка пуста", "Folder Is Empty"),
+                subtitle: L("Перетащи сюда файлы или создай новую папку", "Drop files here or create a new folder"),
+                actionTitle: L("Новая папка", "New Folder")
             )
             emptyStateView.onPrimaryAction = { [weak self] in
                 self?.newFolder(nil)
@@ -1462,13 +1527,16 @@ final class FilePanel: NSView, NSTableViewDataSource, NSTableViewDelegate, NSTex
     }
 
     func updateViewScaleButton() {
-        let mode = viewScale <= 28 ? "Список" : "Плитки"
+        let mode = viewScale <= 28 ? L("Список", "List") : L("Плитки", "Tiles")
         viewScaleButton.title = "\(mode)  \(Int(viewScale))%"
         let symbol = viewScale <= 28 ? "list.bullet" : "square.grid.2x2"
         if #available(macOS 11.0, *) {
             viewScaleButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: mode)
         }
-        viewScaleButton.toolTip = "Вид и размер: \(mode.lowercased()), \(Int(viewScale))%. Нажмите для настройки"
+        viewScaleButton.toolTip = L(
+            "Вид и размер: \(mode.lowercased()), \(Int(viewScale))%. Нажмите для настройки",
+            "View & scale: \(mode.lowercased()), \(Int(viewScale))%. Click to adjust"
+        )
     }
 
     @objc func filterChanged(_ sender: Any?) {

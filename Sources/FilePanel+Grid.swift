@@ -2,10 +2,14 @@ import Cocoa
 import Quartz
 
 extension FilePanel {
+    static func previewBoxHeight(for thumb: CGFloat) -> CGFloat {
+        max(44, round(thumb * 0.78))
+    }
+
     var gridItemSize: NSSize {
         let thumb = visibleIconSize
-        let width = max(124, thumb + 26)
-        let height = thumb + 60
+        let width = max(124, round(thumb * 1.12) + 12)
+        let height = Self.previewBoxHeight(for: thumb) + 52
         return NSSize(width: width, height: height)
     }
 
@@ -293,11 +297,9 @@ extension FilePanel {
     }
 
     func gridCellHeight(for _: Int, maxPreviewSide: CGFloat) -> CGFloat {
-        // A thumbnail is asynchronous presentation data, not layout data.
-        // Reserving the final height from the first placeholder frame prevents
-        // rows, section headers and the current scroll position from moving as
-        // previews arrive in batches.
-        maxPreviewSide + 60
+        // Stable editorial 5:4 / 3:2 slot height — eliminates tall empty air
+        // above 16:9/4:3 media while keeping async thumbnails jitter-free.
+        Self.previewBoxHeight(for: maxPreviewSide) + 52
     }
 
     func makeGridLayout(viewportWidth: CGFloat) -> GridLayout {
@@ -308,10 +310,10 @@ extension FilePanel {
             return cachedGridLayout
         }
 
-        let inset: CGFloat = 12
-        let preferredColumnSpacing = FPStyle.gridSpacing
-        let minimumColumnSpacing = min(preferredColumnSpacing, max(8, preferredColumnSpacing * 0.35))
-        let rowSpacing = min(max(FPStyle.gridSpacing * 0.55, 8), 20)
+        let inset: CGFloat = 8
+        let preferredColumnSpacing = min(FPStyle.gridSpacing, 10)
+        let minimumColumnSpacing = min(preferredColumnSpacing, 8)
+        let rowSpacing = min(max(FPStyle.gridSpacing * 0.40, 6), 12)
         let available = max(viewportWidth - inset * 2, baseItemSize.width)
         let columns = max(1, Int((available + minimumColumnSpacing) / (baseItemSize.width + minimumColumnSpacing)))
         // Keep equal outer insets at every window width. The thumbnail itself
@@ -359,7 +361,7 @@ extension FilePanel {
             positions = built
             cachedGridPositions = (grouped, gridDataRevision, built)
         }
-        var topOffset = inset
+        var topOffset: CGFloat = 2
         for source in sourceSections {
             let isExpanded = expandedGridSections.contains(source.id)
             // Свёрнутая секция показывает весь свой состав в одну строку:
@@ -367,7 +369,7 @@ extension FilePanel {
             // колонок больше не нужно.
             let isHorizontal = grouped && !isExpanded
             let displayed = source.indexes
-            let headerHeight: CGFloat = grouped ? 40 : 0
+            let headerHeight: CGFloat = grouped ? 28 : 0
             let headerTop = topOffset
             let itemsTop = headerTop + headerHeight
             let rows = isHorizontal
@@ -633,28 +635,30 @@ extension FilePanel {
             let sortDate: Date
             if day >= today {
                 id = "today"
-                title = "Сегодня"
+                title = L("Сегодня", "Today")
                 sortDate = today
             } else if day >= yesterday {
                 id = "yesterday"
-                title = "Вчера"
+                title = L("Вчера", "Yesterday")
                 sortDate = yesterday
             } else if day >= sevenDaysAgo {
                 id = "last7"
-                title = "Предыдущие 7 дней"
+                title = L("Предыдущие 7 дней", "Previous 7 Days")
                 sortDate = sevenDaysAgo
             } else if day >= thirtyDaysAgo {
                 id = "last30"
-                title = "Предыдущие 30 дней"
+                title = L("Предыдущие 30 дней", "Previous 30 Days")
                 sortDate = thirtyDaysAgo
             } else if date == Date.distantPast {
                 id = "undated"
-                title = "Без даты"
+                title = L("Без даты", "Undated")
                 sortDate = Date.distantPast
             } else {
                 let components = calendar.dateComponents([.year, .month], from: date)
                 id = String(format: "month-%04d-%02d", components.year ?? 0, components.month ?? 0)
-                title = monthFormatter.string(from: date).capitalized(with: Locale(identifier: "ru_RU"))
+                let locale = Locale(identifier: FPLocalization.isEnglish ? "en_US" : "ru_RU")
+                monthFormatter.locale = locale
+                title = monthFormatter.string(from: date).capitalized(with: locale)
                 sortDate = calendar.date(from: components) ?? date
             }
 

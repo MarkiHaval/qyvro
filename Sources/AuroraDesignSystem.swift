@@ -40,19 +40,19 @@ enum QyvroWorkspaceLayout: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .studioCanvas: return "Студия · Остров (V4)"
-        case .floatingDock: return "Подиум · Док снизу"
-        case .edgeRail: return "Рейл · Узкая панель"
-        case .classicSidebar: return "Сайдбар · Классика"
+        case .studioCanvas: return L("Студия · Остров (V4)", "Studio · Island (V4)")
+        case .floatingDock: return L("Подиум · Док снизу", "Podium · Bottom Dock")
+        case .edgeRail: return L("Рейл · Узкая панель", "Edge Rail")
+        case .classicSidebar: return L("Сайдбар · Классика", "Classic Sidebar")
         }
     }
 
     var shortTitle: String {
         switch self {
-        case .studioCanvas: return "Студия"
-        case .floatingDock: return "Подиум"
-        case .edgeRail: return "Рейл"
-        case .classicSidebar: return "Сайдбар"
+        case .studioCanvas: return L("Студия", "Studio")
+        case .floatingDock: return L("Подиум", "Podium")
+        case .edgeRail: return L("Рейл", "Rail")
+        case .classicSidebar: return L("Сайдбар", "Sidebar")
         }
     }
 
@@ -166,8 +166,8 @@ final class QyvroAuroraBackdropView: NSView {
         gradientEnabled: Bool,
         paneOpacity: CGFloat
     ) -> CGImage? {
-        let width = 768
-        let height = 480
+        let width = 1024
+        let height = 640
         let w = CGFloat(width)
         let h = CGFloat(height)
         let cs = CGColorSpaceCreateDeviceRGB()
@@ -217,72 +217,103 @@ final class QyvroAuroraBackdropView: NSView {
                 ctx.restoreGState()
             }
 
-            let glowStrength = min(1.0, 0.55 + paneOpacity * 0.65)
+            let glowStrength = min(1.15, 0.62 + paneOpacity * 0.68)
+            let warmHighlight = accent.blended(withFraction: 0.24, of: .white) ?? accent
 
-            // 2. Основная скульптурная дуга света (верх-право → центр-право),
-            //    построенная из нескольких смещённых мягких линз — как в
-            //    референсах DIGITAL TECHNOLOGY / VISION / Neon Drift.
+            // 2. Deep-Glow: широкий атмосферный ореол (верхняя дуга + правый горизонт)
+            //    с экспоненциальным затуханием, как оптический Deep Glow без жёстких границ.
             drawRadialBlob(
-                center: CGPoint(x: w * 0.84, y: h * 0.78),
+                center: CGPoint(x: w * 0.82, y: h * 0.82),
+                outerRadius: w * 0.72,
+                colors: [
+                    (start.withAlphaComponent(0.36 * glowStrength), 0.0),
+                    (start.withAlphaComponent(0.22 * glowStrength), 0.22),
+                    (start.withAlphaComponent(0.10 * glowStrength), 0.48),
+                    (end.withAlphaComponent(0.04 * glowStrength), 0.74),
+                    (NSColor.clear, 1.0)
+                ],
+                scaleX: 1.34,
+                scaleY: 0.90,
+                rotation: -0.28
+            )
+
+            // 2b. Вторая точка оптического Deep Glow в левой верхней кромке шапки —
+            //     даёт мягкий студийный свет на весь горизонт окна.
+            drawRadialBlob(
+                center: CGPoint(x: w * 0.14, y: h * 0.92),
                 outerRadius: w * 0.56,
                 colors: [
-                    (start.withAlphaComponent(0.34 * glowStrength), 0.0),
-                    (start.withAlphaComponent(0.16 * glowStrength), 0.38),
-                    (end.withAlphaComponent(0.05 * glowStrength), 0.72),
+                    (accent.withAlphaComponent(0.28 * glowStrength), 0.0),
+                    (start.withAlphaComponent(0.14 * glowStrength), 0.28),
+                    (start.withAlphaComponent(0.05 * glowStrength), 0.58),
                     (NSColor.clear, 1.0)
                 ],
-                scaleX: 1.28,
-                scaleY: 0.86,
-                rotation: -0.32
+                scaleX: 1.38,
+                scaleY: 0.72,
+                rotation: 0.14
             )
 
-            // 3. Светящееся ядро-лента (акцентный блик внутри волны).
+            // 3. Светящееся внутреннее ядро Deep Glow (мягкий оптический пик внутри дуги).
             drawRadialBlob(
-                center: CGPoint(x: w * 0.78, y: h * 0.64),
-                outerRadius: w * 0.30,
+                center: CGPoint(x: w * 0.76, y: h * 0.68),
+                outerRadius: w * 0.34,
                 colors: [
-                    (accent.withAlphaComponent(0.20 * glowStrength), 0.0),
-                    (start.withAlphaComponent(0.10 * glowStrength), 0.45),
+                    (warmHighlight.withAlphaComponent(0.24 * glowStrength), 0.0),
+                    (accent.withAlphaComponent(0.14 * glowStrength), 0.28),
+                    (start.withAlphaComponent(0.06 * glowStrength), 0.56),
                     (NSColor.clear, 1.0)
                 ],
-                scaleX: 0.62,
-                scaleY: 1.38,
-                rotation: 0.42
+                scaleX: 0.74,
+                scaleY: 1.32,
+                rotation: 0.38
             )
 
-            // 4. Глубокий противовес в нижнем левом углу — держит баланс,
-            //    не превращая экран в «кислотный суп».
+            // 4. Глубокий противовес в нижнем левом и нижнем правом краях —
+            //    создаёт объём и глубину без превращения фона в «кислотный суп».
             drawRadialBlob(
-                center: CGPoint(x: w * 0.16, y: h * 0.18),
-                outerRadius: w * 0.52,
+                center: CGPoint(x: w * 0.18, y: h * 0.14),
+                outerRadius: w * 0.58,
                 colors: [
-                    (end.withAlphaComponent(0.24 * glowStrength), 0.0),
-                    (end.withAlphaComponent(0.08 * glowStrength), 0.52),
+                    (end.withAlphaComponent(0.30 * glowStrength), 0.0),
+                    (end.withAlphaComponent(0.14 * glowStrength), 0.34),
+                    (end.withAlphaComponent(0.04 * glowStrength), 0.66),
                     (NSColor.clear, 1.0)
                 ],
-                scaleX: 1.22,
-                scaleY: 0.85,
-                rotation: 0.25
+                scaleX: 1.26,
+                scaleY: 0.88,
+                rotation: 0.24
+            )
+
+            drawRadialBlob(
+                center: CGPoint(x: w * 0.86, y: h * 0.12),
+                outerRadius: w * 0.44,
+                colors: [
+                    (end.withAlphaComponent(0.22 * glowStrength), 0.0),
+                    (end.withAlphaComponent(0.08 * glowStrength), 0.44),
+                    (NSColor.clear, 1.0)
+                ],
+                scaleX: 1.18,
+                scaleY: 0.84,
+                rotation: -0.18
             )
 
             // 5. Тёмное «ядро спокойствия» в рабочей зоне файлов — гарантирует
-            //    идеальный контраст подписей и превью поверх любого градиента.
+            //    идеальный контраст подписей и превью поверх глубокого градиента.
             drawRadialBlob(
-                center: CGPoint(x: w * 0.46, y: h * 0.48),
+                center: CGPoint(x: w * 0.46, y: h * 0.46),
                 outerRadius: w * 0.42,
                 colors: [
-                    (deepBase.withAlphaComponent(0.36 * baseAlpha), 0.0),
-                    (deepBase.withAlphaComponent(0.14 * baseAlpha), 0.55),
+                    (deepBase.withAlphaComponent(0.32 * baseAlpha), 0.0),
+                    (deepBase.withAlphaComponent(0.12 * baseAlpha), 0.56),
                     (NSColor.clear, 1.0)
                 ],
-                scaleX: 1.15,
+                scaleX: 1.16,
                 scaleY: 1.0
             )
 
-            // 6. Деликатное оптическое рифление (fluted glass, как в Neon Drift / Vetra):
-            //    едва заметные вертикальные рёбра света по правой дуге, чтобы
-            //    поверхность ощущалась живым стеклом, а не плоской заливкой.
-            let ribCount = 34
+            // 6. Деликатное оптическое рифление (fluted glass):
+            //    едва заметные вертикальные рёбра света по правой дуге.
+            let ribCount = 36
             let ribWidth = (w * 0.48) / CGFloat(ribCount)
             let startX = w * 0.52
             for i in 0..<ribCount {
@@ -291,9 +322,9 @@ final class QyvroAuroraBackdropView: NSView {
                 let x = startX + CGFloat(i) * ribWidth
                 let ribRect = CGRect(x: x, y: 0, width: ribWidth, height: h)
                 let colors = [
-                    NSColor.white.withAlphaComponent(0.022 * envelope).cgColor,
+                    NSColor.white.withAlphaComponent(0.020 * envelope).cgColor,
                     NSColor.clear.cgColor,
-                    NSColor.black.withAlphaComponent(0.028 * envelope).cgColor
+                    NSColor.black.withAlphaComponent(0.026 * envelope).cgColor
                 ] as CFArray
                 if let ribGrad = CGGradient(colorsSpace: cs, colors: colors, locations: [0.0, 0.45, 1.0]) {
                     ctx.saveGState()
@@ -309,8 +340,9 @@ final class QyvroAuroraBackdropView: NSView {
             }
         }
 
-        // 7. Незаметное плёночное микрозерно (убирает 8-битный бандинг на тёмных
-        //    градиентах на Retina-дисплеях и даёт благородную матовую фактуру).
+        // 7. Органичное плёночное микрозерно (треугольное распределение):
+        //    убирает 8-битный бандинг на Deep Glow градиентах и даёт тактильную
+        //    фактуру в светящихся зонах, сохраняя глубокий чистый чёрный в тенях.
         if let rawPtr = ctx.data {
             let pixels = rawPtr.assumingMemoryBound(to: UInt8.self)
             var state: UInt32 = 0x9E3779B9
@@ -318,10 +350,19 @@ final class QyvroAuroraBackdropView: NSView {
             var offset = 0
             while offset < totalBytes {
                 state = state &* 1664525 &+ 1013904223
-                let delta = Int((state >> 29) & 0x3) - 1 // -1..+2
-                pixels[offset] = UInt8(clamping: Int(pixels[offset]) + delta)
-                pixels[offset + 1] = UInt8(clamping: Int(pixels[offset + 1]) + delta)
-                pixels[offset + 2] = UInt8(clamping: Int(pixels[offset + 2]) + delta)
+                let u1 = Int((state >> 24) & 0x7) // 0..7
+                state = state &* 1664525 &+ 1013904223
+                let u2 = Int((state >> 24) & 0x7) // 0..7
+                // Треугольное распределение (-7..+7), мягко масштабируется по яркости пикселя.
+                let r = Int(pixels[offset])
+                let g = Int(pixels[offset + 1])
+                let b = Int(pixels[offset + 2])
+                let luma = (r + g + b) / 3
+                let scale = luma > 28 ? 3 : 2
+                let delta = ((u1 - u2) * scale) / 5
+                pixels[offset] = UInt8(clamping: r + delta)
+                pixels[offset + 1] = UInt8(clamping: g + delta)
+                pixels[offset + 2] = UInt8(clamping: b + delta)
                 offset += 4
             }
         }
@@ -1419,6 +1460,7 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
     var onShowVolumesMenu: ((NSView) -> Void)?
     var onShowBookmarksMenu: ((NSView) -> Void)?
     var onShowTagsMenu: ((NSView) -> Void)?
+    var onFuzzyJump: (() -> Void)?
     var onPickFilter: ((FPGridFilter) -> Void)?
     var onSearchTextChanged: ((String) -> Void)?
     var onToggleSearchScope: (() -> Void)?
@@ -1432,6 +1474,10 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
     private let parentButton = NSButton()
 
     private let bookmarksBtn = NSButton()
+    private let gitPill = FPLayerView(color: .clear, cornerRadius: 9, borderColor: .clear, borderWidth: 1)
+    private let gitLabel = NSTextField(labelWithString: "")
+    private var gitFetchGeneration = 0
+    private var lastStudioTitleArgs: (title: String, parent: String?, count: Int, url: URL?, isRecents: Bool)?
     private let searchCapsule = FPLayerView(color: .clear, cornerRadius: 15)
     private let searchIcon = NSImageView()
     private let searchField = CenteredTextField()
@@ -1442,6 +1488,7 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
     private let locationsStack = NSStackView()
     private let filtersTray = FPLayerView(color: .clear, cornerRadius: 13)
     private let filtersStack = NSStackView()
+    private let fuzzyJumpBtn = QyvroStudioPillButton(title: "⌘J", symbol: "bolt.horizontal")
     private let bottomHairline = FPLayerView(color: .clear)
 
     private var recentsPill: QyvroStudioPillButton?
@@ -1500,11 +1547,28 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
         parentButton.font = FPStyle.bodyFont(ofSize: 12, weight: .medium)
         parentButton.target = self
         parentButton.action = #selector(upPressed(_:))
-        parentButton.toolTip = "Перейти на уровень выше (двойной клик по заголовку — ввести путь ⌘L)"
+        parentButton.toolTip = L(
+            "Перейти на уровень выше (двойной клик по заголовку — ввести путь ⌘L)",
+            "Go to parent folder (double-click title to enter path ⌘L)"
+        )
         parentButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         parentButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let heroCluster = NSStackView(views: [navCluster, titleLabel, countPill, parentButton])
+        gitLabel.font = FPStyle.monoMetaFont(ofSize: 10, weight: .medium)
+        gitLabel.lineBreakMode = .byTruncatingTail
+        gitLabel.translatesAutoresizingMaskIntoConstraints = false
+        gitPill.addSubview(gitLabel)
+        gitPill.isHidden = true
+        gitPill.setContentHuggingPriority(.required, for: .horizontal)
+        gitPill.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        NSLayoutConstraint.activate([
+            gitLabel.leadingAnchor.constraint(equalTo: gitPill.leadingAnchor, constant: 8),
+            gitLabel.trailingAnchor.constraint(equalTo: gitPill.trailingAnchor, constant: -8),
+            gitLabel.centerYAnchor.constraint(equalTo: gitPill.centerYAnchor),
+            gitPill.heightAnchor.constraint(equalToConstant: 20)
+        ])
+
+        let heroCluster = NSStackView(views: [navCluster, titleLabel, countPill, parentButton, gitPill])
         heroCluster.orientation = .horizontal
         heroCluster.spacing = 9
         heroCluster.alignment = .centerY
@@ -1542,19 +1606,29 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
         searchCapsule.addSubview(searchIcon)
         searchCapsule.addSubview(searchField)
         searchCapsule.addSubview(searchScopeBtn)
-        let preferredSearchWidth = searchCapsule.widthAnchor.constraint(equalToConstant: 214)
+        let preferredSearchWidth = searchCapsule.widthAnchor.constraint(equalToConstant: 232)
         preferredSearchWidth.priority = NSLayoutConstraint.Priority(240)
         preferredSearchWidth.isActive = true
-        searchCapsule.widthAnchor.constraint(greaterThanOrEqualToConstant: 128).isActive = true
+        searchCapsule.widthAnchor.constraint(greaterThanOrEqualToConstant: 140).isActive = true
 
-        configureCircleButton(bookmarksBtn, symbol: "bookmark", tooltip: "Закладки и закреплённые папки", action: #selector(bookmarksPressed(_:)))
+        configureCircleButton(bookmarksBtn, symbol: "bookmark", tooltip: L("Закладки и закреплённые папки", "Bookmarks & pinned folders"), action: #selector(bookmarksPressed(_:)))
+
+        filtersStack.orientation = .horizontal
+        filtersStack.spacing = 2
+        filtersStack.alignment = .centerY
+        filtersStack.translatesAutoresizingMaskIntoConstraints = false
+        filtersTray.addSubview(filtersStack)
+        filtersTray.setContentHuggingPriority(.required, for: .horizontal)
+        filtersTray.setContentCompressionResistancePriority(.required, for: .horizontal)
+
         let heroRow = NSView()
         heroRow.translatesAutoresizingMaskIntoConstraints = false
         heroRow.addSubview(heroCluster)
+        heroRow.addSubview(filtersTray)
         heroRow.addSubview(bookmarksBtn)
         heroRow.addSubview(searchCapsule)
 
-        // Строка 2: капсулы быстрого перехода + утопленный лоток фильтров.
+        // Строка 2: компактная лента быстрых папок на всю ширину + кнопка быстрого прыжка ⌘J.
         locationsStack.orientation = .horizontal
         locationsStack.spacing = 4.5
         locationsStack.alignment = .centerY
@@ -1584,19 +1658,16 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
         locationsFadeContainer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         locationsFadeContainer.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(180), for: .horizontal)
 
-        filtersStack.orientation = .horizontal
-        filtersStack.spacing = 2
-        filtersStack.alignment = .centerY
-        filtersStack.translatesAutoresizingMaskIntoConstraints = false
-
-        filtersTray.addSubview(filtersStack)
-        filtersTray.setContentHuggingPriority(.required, for: .horizontal)
-        filtersTray.setContentCompressionResistancePriority(.required, for: .horizontal)
+        fuzzyJumpBtn.target = self
+        fuzzyJumpBtn.action = #selector(fuzzyJumpPressed(_:))
+        fuzzyJumpBtn.toolTip = L("Мгновенный переход к папке (⌘J)", "Fuzzy Jump to Folder (⌘J)")
+        fuzzyJumpBtn.setContentHuggingPriority(.required, for: .horizontal)
+        fuzzyJumpBtn.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let pillRow = NSView()
         pillRow.translatesAutoresizingMaskIntoConstraints = false
         pillRow.addSubview(locationsFadeContainer)
-        pillRow.addSubview(filtersTray)
+        pillRow.addSubview(fuzzyJumpBtn)
 
         addSubview(heroRow)
         addSubview(pillRow)
@@ -1608,7 +1679,7 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             countLabel.topAnchor.constraint(equalTo: countPill.topAnchor, constant: 2),
             countLabel.bottomAnchor.constraint(equalTo: countPill.bottomAnchor, constant: -2),
 
-            searchCapsule.heightAnchor.constraint(equalToConstant: 30),
+            searchCapsule.heightAnchor.constraint(equalToConstant: 28),
             searchIcon.leadingAnchor.constraint(equalTo: searchCapsule.leadingAnchor, constant: 10),
             searchIcon.centerYAnchor.constraint(equalTo: searchCapsule.centerYAnchor),
             searchIcon.widthAnchor.constraint(equalToConstant: 13),
@@ -1616,20 +1687,28 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             searchField.leadingAnchor.constraint(equalTo: searchIcon.trailingAnchor, constant: 6),
             searchField.trailingAnchor.constraint(equalTo: searchScopeBtn.leadingAnchor, constant: -5),
             searchField.centerYAnchor.constraint(equalTo: searchCapsule.centerYAnchor),
-            searchField.heightAnchor.constraint(equalToConstant: 24),
-            searchScopeBtn.trailingAnchor.constraint(equalTo: searchCapsule.trailingAnchor, constant: -5),
+            searchField.heightAnchor.constraint(equalToConstant: 22),
+            searchScopeBtn.trailingAnchor.constraint(equalTo: searchCapsule.trailingAnchor, constant: -4),
             searchScopeBtn.centerYAnchor.constraint(equalTo: searchCapsule.centerYAnchor),
             searchScopeBtn.widthAnchor.constraint(equalToConstant: 44),
             searchScopeBtn.heightAnchor.constraint(equalToConstant: 20),
 
-            heroRow.topAnchor.constraint(equalTo: topAnchor, constant: 4),
+            filtersStack.leadingAnchor.constraint(equalTo: filtersTray.leadingAnchor, constant: 2),
+            filtersStack.trailingAnchor.constraint(equalTo: filtersTray.trailingAnchor, constant: -2),
+            filtersStack.topAnchor.constraint(equalTo: filtersTray.topAnchor, constant: 2),
+            filtersStack.bottomAnchor.constraint(equalTo: filtersTray.bottomAnchor, constant: -2),
+            filtersTray.heightAnchor.constraint(equalToConstant: 26),
+
+            heroRow.topAnchor.constraint(equalTo: topAnchor, constant: 2),
             heroRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             heroRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            heroRow.heightAnchor.constraint(equalToConstant: 36),
+            heroRow.heightAnchor.constraint(equalToConstant: 32),
 
             heroCluster.leadingAnchor.constraint(equalTo: heroRow.leadingAnchor),
             heroCluster.centerYAnchor.constraint(equalTo: heroRow.centerYAnchor),
-            heroCluster.trailingAnchor.constraint(lessThanOrEqualTo: bookmarksBtn.leadingAnchor, constant: -10),
+            heroCluster.trailingAnchor.constraint(lessThanOrEqualTo: filtersTray.leadingAnchor, constant: -10),
+            filtersTray.trailingAnchor.constraint(equalTo: bookmarksBtn.leadingAnchor, constant: -7),
+            filtersTray.centerYAnchor.constraint(equalTo: heroRow.centerYAnchor),
             bookmarksBtn.trailingAnchor.constraint(equalTo: searchCapsule.leadingAnchor, constant: -7),
             bookmarksBtn.centerYAnchor.constraint(equalTo: heroRow.centerYAnchor),
             searchCapsule.trailingAnchor.constraint(equalTo: heroRow.trailingAnchor),
@@ -1646,25 +1725,19 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             locationsScroll.topAnchor.constraint(equalTo: locationsFadeContainer.topAnchor),
             locationsScroll.bottomAnchor.constraint(equalTo: locationsFadeContainer.bottomAnchor),
 
-            filtersStack.leadingAnchor.constraint(equalTo: filtersTray.leadingAnchor, constant: 2),
-            filtersStack.trailingAnchor.constraint(equalTo: filtersTray.trailingAnchor, constant: -2),
-            filtersStack.topAnchor.constraint(equalTo: filtersTray.topAnchor, constant: 2),
-            filtersStack.bottomAnchor.constraint(equalTo: filtersTray.bottomAnchor, constant: -2),
-
-            pillRow.topAnchor.constraint(equalTo: heroRow.bottomAnchor, constant: 8),
+            pillRow.topAnchor.constraint(equalTo: heroRow.bottomAnchor, constant: 5),
             pillRow.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             pillRow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            pillRow.heightAnchor.constraint(equalToConstant: 26),
+            pillRow.heightAnchor.constraint(equalToConstant: 24),
 
             locationsFadeContainer.leadingAnchor.constraint(equalTo: pillRow.leadingAnchor),
-            locationsFadeContainer.trailingAnchor.constraint(equalTo: filtersTray.leadingAnchor, constant: -10),
+            locationsFadeContainer.trailingAnchor.constraint(equalTo: fuzzyJumpBtn.leadingAnchor, constant: -8),
             locationsFadeContainer.topAnchor.constraint(equalTo: pillRow.topAnchor),
             locationsFadeContainer.bottomAnchor.constraint(equalTo: pillRow.bottomAnchor),
-            filtersTray.trailingAnchor.constraint(equalTo: pillRow.trailingAnchor),
-            filtersTray.centerYAnchor.constraint(equalTo: pillRow.centerYAnchor),
-            filtersTray.heightAnchor.constraint(equalToConstant: 26),
+            fuzzyJumpBtn.trailingAnchor.constraint(equalTo: pillRow.trailingAnchor),
+            fuzzyJumpBtn.centerYAnchor.constraint(equalTo: pillRow.centerYAnchor),
 
-            bottomHairline.topAnchor.constraint(equalTo: pillRow.bottomAnchor, constant: 9),
+            bottomHairline.topAnchor.constraint(equalTo: pillRow.bottomAnchor, constant: 6),
             bottomHairline.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
             bottomHairline.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
             bottomHairline.heightAnchor.constraint(equalToConstant: 0.75),
@@ -1720,19 +1793,19 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
 
         let home = FileManager.default.homeDirectoryForCurrentUser
 
-        let recents = QyvroStudioPillButton(title: "Недавние", symbol: "clock.arrow.circlepath")
+        let recents = QyvroStudioPillButton(title: L("Недавние", "Recents"), symbol: "clock.arrow.circlepath")
         recents.target = self
         recents.action = #selector(recentsPressed(_:))
         recentsPill = recents
         locationsStack.addArrangedSubview(recents)
 
         let places: [(String, String, URL)] = [
-            ("Загрузки", "arrow.down.circle", home.appendingPathComponent("Downloads", isDirectory: true)),
-            ("Документы", "doc.text", home.appendingPathComponent("Documents", isDirectory: true)),
-            ("Стол", "menubar.rectangle", home.appendingPathComponent("Desktop", isDirectory: true)),
-            ("Дом", "house", home),
-            ("Фото", "photo", home.appendingPathComponent("Pictures", isDirectory: true)),
-            ("Программы", "app.badge", URL(fileURLWithPath: "/Applications", isDirectory: true))
+            (L("Загрузки", "Downloads"), "arrow.down.circle", home.appendingPathComponent("Downloads", isDirectory: true)),
+            (L("Документы", "Documents"), "doc.text", home.appendingPathComponent("Documents", isDirectory: true)),
+            (L("Стол", "Desktop"), "menubar.rectangle", home.appendingPathComponent("Desktop", isDirectory: true)),
+            (L("Дом", "Home"), "house", home),
+            (L("Фото", "Pictures"), "photo", home.appendingPathComponent("Pictures", isDirectory: true)),
+            (L("Программы", "Apps"), "app.badge", URL(fileURLWithPath: "/Applications", isDirectory: true))
         ]
         for place in places {
             let pill = QyvroStudioPillButton(title: place.0, symbol: place.1, url: place.2)
@@ -1745,20 +1818,20 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             locationsStack.addArrangedSubview(pill)
         }
 
-        let drivesPill = QyvroStudioPillButton(title: "Диски", symbol: "externaldrive")
+        let drivesPill = QyvroStudioPillButton(title: L("Диски", "Drives"), symbol: "externaldrive")
         drivesPill.target = self
         drivesPill.action = #selector(volumesPressed(_:))
         locationsStack.addArrangedSubview(drivesPill)
 
-        let tagsPill = QyvroStudioPillButton(title: "Теги", symbol: "tag")
+        let tagsPill = QyvroStudioPillButton(title: L("Теги", "Tags"), symbol: "tag")
         tagsPill.target = self
         tagsPill.action = #selector(tagsPressed(_:))
         locationsStack.addArrangedSubview(tagsPill)
 
         let quickFilters: [(String, FPGridFilter)] = [
-            ("Все", .all),
-            ("Фото", .images),
-            ("Видео", .videos),
+            (L("Все", "All"), .all),
+            (L("Фото", "Photos"), .images),
+            (L("Видео", "Videos"), .videos),
             ("★", .flagged)
         ]
         for entry in quickFilters {
@@ -1774,15 +1847,20 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
     override func mouseDown(with event: NSEvent) {
         if event.clickCount >= 2 {
             let pt = convert(event.locationInWindow, from: nil)
-            if pt.y > bounds.height - 44 {
+            if pt.y > bounds.height - 40 {
                 onRequestPathEdit?()
                 return
             }
         }
-        super.mouseDown(with: event)
+        window?.performDrag(with: event)
+    }
+
+    @objc private func fuzzyJumpPressed(_ sender: Any?) {
+        onFuzzyJump?()
     }
 
     func updateTitle(_ title: String, parentSubtitle: String?, itemCount: Int, url: URL?, isRecents: Bool) {
+        lastStudioTitleArgs = (title, parentSubtitle, itemCount, url, isRecents)
         let displayFont = FPStyle.displayFont(ofSize: 22, weight: .semibold)
         titleLabel.attributedStringValue = NSAttributedString(
             string: title,
@@ -1801,6 +1879,30 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             parentButton.isHidden = false
         } else {
             parentButton.isHidden = true
+        }
+
+        // Аккуратный Git-бейдж (только внутри git-репозиториев, асинхронно).
+        gitFetchGeneration += 1
+        let gen = gitFetchGeneration
+        if let url, !isRecents {
+            QyvroGitStatusProvider.shared.fetchStatus(for: url) { [weak self] summary in
+                guard let self, self.gitFetchGeneration == gen else { return }
+                if let summary {
+                    self.gitLabel.stringValue = "⎇ \(summary.badgeText)"
+                    self.gitLabel.textColor = summary.dirtyCount > 0 ? FPStyle.orange : FPStyle.dimText
+                    self.gitPill.layer?.backgroundColor = (summary.dirtyCount > 0
+                        ? FPStyle.accent.withAlphaComponent(0.11)
+                        : FPStyle.control.withAlphaComponent(0.55)).cgColor
+                    self.gitPill.layer?.borderColor = (summary.dirtyCount > 0
+                        ? FPStyle.accent.withAlphaComponent(0.28)
+                        : FPStyle.stroke.withAlphaComponent(0.55)).cgColor
+                    self.gitPill.isHidden = false
+                } else {
+                    self.gitPill.isHidden = true
+                }
+            }
+        } else {
+            gitPill.isHidden = true
         }
 
         recentsPill?.isSelectedPill = isRecents
@@ -1831,9 +1933,21 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
             searchField.stringValue = query
             suppressSearchNotification = false
         }
-        searchScopeBtn.title = isGlobalScope ? "Мак" : "Папка"
-        searchField.placeholderString = isGlobalScope ? "Найти на Mac…" : "Поиск в папке…"
+        searchScopeBtn.title = isGlobalScope ? L("Мак", "Mac") : L("Папка", "Folder")
+        searchField.placeholderString = isGlobalScope ? L("Найти на Mac…", "Search Mac…") : L("Поиск в папке…", "Search folder…")
         applySearchScopeTheme()
+    }
+
+    func refreshLocalization() {
+        let activeFilter = filterPills.first(where: \.isSelectedPill)?.filterOption ?? .all
+        rebuildLocationAndFilterPills()
+        updateFilter(activeFilter)
+        searchScopeBtn.title = isGlobalSearch ? L("Мак", "Mac") : L("Папка", "Folder")
+        searchField.placeholderString = isGlobalSearch ? L("Найти на Mac…", "Search Mac…") : L("Поиск в папке…", "Search folder…")
+        if let args = lastStudioTitleArgs {
+            updateTitle(args.title, parentSubtitle: args.parent, itemCount: args.count, url: args.url, isRecents: args.isRecents)
+        }
+        applyTheme()
     }
 
     var isSearchFieldFocused: Bool {
@@ -1879,6 +1993,7 @@ final class QyvroStudioHeaderView: NSView, NSTextFieldDelegate {
         countPill.layer?.backgroundColor = tint.withAlphaComponent(0.07).cgColor
         countLabel.textColor = FPStyle.dimText
         parentButton.contentTintColor = FPStyle.dimText.withAlphaComponent(0.78)
+        fuzzyJumpBtn.updateAppearance()
         parentButton.font = FPStyle.bodyFont(ofSize: 12, weight: .medium)
 
         searchCapsule.layer?.backgroundColor = NSColor(calibratedWhite: 0.015, alpha: 0.44).cgColor
@@ -2071,11 +2186,11 @@ final class QyvroSelectionActionBar: NSVisualEffectView {
         summaryLabel.translatesAutoresizingMaskIntoConstraints = false
         summaryLabel.setContentHuggingPriority(.required, for: .horizontal)
 
-        configureAction(compareBtn, title: "Сравнить", symbol: "rectangle.split.2x1", action: #selector(comparePressed(_:)))
-        configureAction(shelfBtn, title: "Полка", symbol: "tray.and.arrow.down", action: #selector(shelfPressed(_:)))
+        configureAction(compareBtn, title: L("Сравнить", "Compare"), symbol: "rectangle.split.2x1", action: #selector(comparePressed(_:)))
+        configureAction(shelfBtn, title: L("Полка", "Shelf"), symbol: "tray.and.arrow.down", action: #selector(shelfPressed(_:)))
         configureAction(zipBtn, title: "ZIP", symbol: "doc.zipper", action: #selector(zipPressed(_:)))
-        configureAction(renameBtn, title: "Переименовать", symbol: "pencil.line", action: #selector(renamePressed(_:)))
-        configureAction(trashBtn, title: "В корзину", symbol: "trash", isDestructive: true, action: #selector(trashPressed(_:)))
+        configureAction(renameBtn, title: L("Переименовать", "Rename"), symbol: "pencil.line", action: #selector(renamePressed(_:)))
+        configureAction(trashBtn, title: L("В корзину", "Trash"), symbol: "trash", isDestructive: true, action: #selector(trashPressed(_:)))
         configureClose(clearBtn)
 
         let stack = NSStackView(views: [summaryLabel, compareBtn, shelfBtn, zipBtn, renameBtn, trashBtn, clearBtn])
@@ -2145,11 +2260,15 @@ final class QyvroSelectionActionBar: NSVisualEffectView {
         }
         let nonDirs = selectedItems.filter { !$0.isDirectory }
         let bytes = nonDirs.reduce(Int64(0)) { $0 + ($1.size ?? 0) }
-        var text = "Выбрано \(selectedItems.count)"
+        var text = L("Выбрано \(selectedItems.count)", "\(selectedItems.count) selected")
         if bytes > 0 {
             text += " · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file))"
         }
         summaryLabel.stringValue = text
+        compareBtn.title = L("Сравнить", "Compare")
+        shelfBtn.title = L("Полка", "Shelf")
+        renameBtn.title = L("Переименовать", "Rename")
+        trashBtn.title = L("В корзину", "Trash")
         compareBtn.isHidden = !(selectedItems.count == 2 && nonDirs.count == 2)
         applyTheme()
         setBarVisible(true)

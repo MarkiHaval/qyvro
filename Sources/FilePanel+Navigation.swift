@@ -114,6 +114,9 @@ extension FilePanel {
     func isValidHistoryTarget(at index: Int) -> Bool {
         guard index >= 0, index < history.count else { return false }
         let entry = history[index]
+        if let archiveURL = entry.archiveURL {
+            return fileManager.fileExists(atPath: archiveURL.path)
+        }
         if entry.isRecents || entry.tagTitle != nil {
             return true
         }
@@ -239,6 +242,7 @@ extension FilePanel {
 
         let isSameDirectory = virtualTagTitle == nil
             && virtualSearchTitle == nil
+            && virtualArchiveURL == nil
             && currentURL.standardizedFileURL == resolved.standardizedFileURL
 
         if !isSameDirectory {
@@ -249,7 +253,11 @@ extension FilePanel {
         virtualTagKey = nil
         virtualTagTitle = nil
         virtualSearchTitle = nil
+        virtualArchiveURL = nil
+        virtualArchiveInternalPath = ""
+        virtualArchiveEntryByURL = [:]
         currentURL = resolved
+        QyvroRecentFoldersStore.shared.record(resolved)
         pathField.stringValue = resolved.path
         breadcrumbPathView.update(url: resolved)
         searchField.stringValue = ""
@@ -283,8 +291,11 @@ extension FilePanel {
         virtualTagKey = tagKey
         virtualTagTitle = title
         virtualSearchTitle = nil
-        pathField.stringValue = "Теги / \(title)"
-        breadcrumbPathView.updateVirtualPath("Теги  ›  \(title)")
+        virtualArchiveURL = nil
+        virtualArchiveInternalPath = ""
+        virtualArchiveEntryByURL = [:]
+        pathField.stringValue = "\(L("Теги", "Tags")) / \(title)"
+        breadcrumbPathView.updateVirtualPath("\(L("Теги", "Tags"))  ›  \(title)")
         searchField.stringValue = ""
         showError("")
         recordHistoryIfNeeded(HistoryEntry(url: currentURL, tagKey: tagKey, tagTitle: title), adding: addingToHistory)
@@ -305,9 +316,12 @@ extension FilePanel {
         stopRecentItemsQuery()
         virtualTagKey = nil
         virtualTagTitle = nil
+        virtualArchiveURL = nil
+        virtualArchiveInternalPath = ""
+        virtualArchiveEntryByURL = [:]
         virtualSearchTitle = "Недавние"
-        pathField.stringValue = "Недавние файлы и папки"
-        breadcrumbPathView.updateVirtualPath("Недавние  ›  по дате создания")
+        pathField.stringValue = L("Недавние файлы и папки", "Recent files & folders")
+        breadcrumbPathView.updateVirtualPath(L("Недавние  ›  по дате создания", "Recents  ›  by date added"))
         searchField.stringValue = ""
         showError("")
         tableView.sortDescriptors = [NSSortDescriptor(key: "created", ascending: false)]
@@ -508,9 +522,12 @@ extension FilePanel {
         loadGeneration += 1
         virtualTagKey = nil
         virtualTagTitle = nil
-        virtualSearchTitle = "Поиск: \(query)"
-        pathField.stringValue = "Поиск на Mac / \(query)"
-        breadcrumbPathView.updateVirtualPath("Поиск на Mac  ›  \(query)")
+        virtualArchiveURL = nil
+        virtualArchiveInternalPath = ""
+        virtualArchiveEntryByURL = [:]
+        virtualSearchTitle = "\(L("Поиск", "Search")): \(query)"
+        pathField.stringValue = "\(L("Поиск на Mac", "Search Mac")) / \(query)"
+        breadcrumbPathView.updateVirtualPath("\(L("Поиск на Mac", "Search Mac"))  ›  \(query)")
         searchField.stringValue = ""
         let keys: [URLResourceKey] = [
             .isDirectoryKey, .fileSizeKey, .creationDateKey,
@@ -536,8 +553,102 @@ extension FilePanel {
         historyIndex = history.count - 1
     }
 
+    func openZipArchive(
+        _ zipURL: URL,
+        internalPath: String = "",
+        addingToHistory: Bool = true,
+        loadCompletion: (() -> Void)? = nil
+    ) {
+        let resolvedZip = zipURL.standardizedFileURL
+        guard fileManager.fileExists(atPath: resolvedZip.path) else {
+            showError(L("Архив не найден.", "Archive not found."))
+            loadCompletion?()
+            return
+        }
+        activate()
+        stopRecentItemsQuery()
+        stopWatchingCurrentDirectory()
+        virtualTagKey = nil
+        virtualTagTitle = nil
+        virtualSearchTitle = nil
+        virtualArchiveURL = resolvedZip
+        let cleanInternal = internalPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        virtualArchiveInternalPath = cleanInternal
+        currentURL = resolvedZip.deletingLastPathComponent()
+
+        let crumbDisplay = cleanInternal.isEmpty
+            ? "ZIP  ›  \(resolvedZip.lastPathComponent)"
+            : "ZIP  ›  \(resolvedZip.lastPathComponent)  ›  \(cleanInternal.replacingOccurrences(of: "/", with: "  ›  "))"
+        pathField.stringValue = cleanInternal.isEmpty ? resolvedZip.path : "\(resolvedZip.path) / \(cleanInternal)"
+        breadcrumbPathView.updateVirtualPath(crumbDisplay)
+        searchField.stringValue = ""
+        showError("")
+
+        recordHistoryIfNeeded(
+            HistoryEntry(
+                url: resolvedZip.deletingLastPathComponent(),
+                tagKey: nil,
+                tagTitle: nil,
+                isRecents: false,
+                archiveURL: resolvedZip,
+                archiveInternalPath: cleanInternal
+            ),
+            adding: addingToHistory
+        )
+
+        loadGeneration += 1
+        let generation = loadGeneration
+        directoryLoadQueue.async { [weak self] in
+            let entries = QyvroZipArchiveService.shared.listChildren(
+                in: resolvedZip,
+                internalDirectory: cleanInternal
+            )
+            var entryMap: [String: String] = [:]
+            let syntheticRoot = URL(fileURLWithPath: "/.qyvro-zip/\(resolvedZip.lastPathComponent)", isDirectory: true)
+            let builtItems: [FileItem] = entries.map { entry in
+                let trimmed = entry.internalPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                let itemURL = syntheticRoot.appendingPathComponent(trimmed, isDirectory: entry.isDirectory)
+                entryMap[itemURL.path] = entry.internalPath
+                let ext = itemURL.pathExtension.uppercased()
+                let kind = entry.isDirectory
+                    ? L("Папка в ZIP", "Folder in ZIP")
+                    : (ext.isEmpty ? L("Файл в ZIP", "File in ZIP") : "\(ext) · ZIP")
+                return FileItem(
+                    url: itemURL,
+                    name: entry.name,
+                    isDirectory: entry.isDirectory,
+                    size: entry.isDirectory ? nil : entry.uncompressedSize,
+                    created: entry.modified,
+                    modified: entry.modified,
+                    kind: kind,
+                    isHidden: entry.name.hasPrefix("."),
+                    finderTags: []
+                )
+            }
+            DispatchQueue.main.async {
+                guard let self, self.loadGeneration == generation, self.virtualArchiveURL == resolvedZip else {
+                    loadCompletion?()
+                    return
+                }
+                self.virtualArchiveEntryByURL = entryMap
+                self.items = builtItems
+                self.sortItems()
+                self.applyFilter(preservingGridPosition: false)
+                self.onURLChanged?(self)
+                loadCompletion?()
+            }
+        }
+    }
+
     func applyHistoryEntry(_ entry: HistoryEntry, completion: (() -> Void)? = nil) {
-        if entry.isRecents {
+        if let archiveURL = entry.archiveURL {
+            openZipArchive(
+                archiveURL,
+                internalPath: entry.archiveInternalPath ?? "",
+                addingToHistory: false,
+                loadCompletion: completion
+            )
+        } else if entry.isRecents {
             currentURL = entry.url
             showRecentItems(addingToHistory: false, loadCompletion: completion)
         } else if let title = entry.tagTitle {
@@ -554,6 +665,10 @@ extension FilePanel {
         preservingGridPosition: Bool = false,
         completion: (() -> Void)? = nil
     ) {
+        if let archiveURL = virtualArchiveURL {
+            openZipArchive(archiveURL, internalPath: virtualArchiveInternalPath, addingToHistory: false, loadCompletion: completion)
+            return
+        }
         if isRecentItemsView {
             loadRecentItems(preservingGridPosition: preservingGridPosition, completion: completion)
             return
@@ -1258,6 +1373,17 @@ extension FilePanel {
 
     @objc func goUp(_ sender: Any?) {
         activate()
+        if let archiveURL = virtualArchiveURL {
+            let trimmed = virtualArchiveInternalPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            if trimmed.isEmpty {
+                navigate(to: archiveURL.deletingLastPathComponent())
+            } else {
+                let parts = trimmed.split(separator: "/")
+                let parentInternal = parts.dropLast().joined(separator: "/")
+                openZipArchive(archiveURL, internalPath: parentInternal)
+            }
+            return
+        }
         let parent = currentURL.deletingLastPathComponent()
         guard parent.path != currentURL.path else { return }
         navigate(to: parent)

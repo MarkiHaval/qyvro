@@ -2,6 +2,7 @@ import AVFoundation
 import Cocoa
 import ImageIO
 import QuickLookThumbnailing
+import UniformTypeIdentifiers
 
 extension FilePanel {
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -132,10 +133,22 @@ extension FilePanel {
 
     func displayImage(for item: FileItem, size: CGFloat) -> NSImage {
         if item.isDirectory {
-            if let custom = CustomFolderIconStore.shared.image(for: item.url) {
+            if !isArchiveMode, let custom = CustomFolderIconStore.shared.image(for: item.url) {
                 return custom
             }
-            return coloredFolderIcon(color: folderColor(for: item.url) ?? FPStyle.defaultFolder, size: size)
+            return coloredFolderIcon(color: isArchiveMode ? FPStyle.defaultFolder : (folderColor(for: item.url) ?? FPStyle.defaultFolder), size: size)
+        }
+
+        if isArchiveMode {
+            let type = UTType(filenameExtension: item.url.pathExtension) ?? .data
+            let icon = NSWorkspace.shared.icon(for: type)
+            icon.size = NSSize(width: size, height: size)
+            return icon
+        }
+
+        if FPFontPreviewRenderer.isFontURL(item.url),
+           let fontThumb = FPFontPreviewRenderer.thumbnail(for: item.url, size: size) {
+            return fontThumb
         }
 
         let key = thumbnailKey(for: item, size: size)

@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     private var previewWindowController: FPPreviewWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var commandPaletteController: CommandPaletteController?
+    private var fuzzyJumpController: QyvroFuzzyJumpController?
     private var sessionSaveWorkItem: DispatchWorkItem?
     private let sessionDefaultsKey = "QyvroWindowSessionV1"
     private var suppressExplorerReopenForClipboard = false
@@ -32,6 +33,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         FPStyle.migrateToStudioVersionFour()
         FPFinderTagStore.migrateLegacyAssignmentsIfNeeded()
         buildMenu()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(languageChanged(_:)),
+            name: .fpLanguageDidChange,
+            object: nil
+        )
         QyvroClipboardModule.shared.start()
         if let data = UserDefaults.standard.data(forKey: sessionDefaultsKey),
            let sessions = try? JSONDecoder().decode([FPWindowSession].self, from: data),
@@ -287,85 +294,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        // ⇧⌘V is owned by the Carbon global hotkey. Giving the NSMenuItem the
-        // same key equivalent can deliver the action twice while Qyvro is
-        // active, so the menu remains a click-only fallback.
-        let clipboardItem = appMenu.addItem(withTitle: "Буфер обмена", action: #selector(showClipboard(_:)), keyEquivalent: "")
+        let clipboardItem = appMenu.addItem(withTitle: L("Буфер обмена", "Clipboard History"), action: #selector(showClipboard(_:)), keyEquivalent: "")
         clipboardItem.target = self
-        let settingsItem = appMenu.addItem(withTitle: "Настройки...", action: #selector(showSettings(_:)), keyEquivalent: ",")
+        let settingsItem = appMenu.addItem(withTitle: L("Настройки…", "Settings…"), action: #selector(showSettings(_:)), keyEquivalent: ",")
         settingsItem.target = self
+        let updatesItem = appMenu.addItem(withTitle: L("Проверить обновления…", "Check for Updates…"), action: #selector(checkForUpdates(_:)), keyEquivalent: "")
+        updatesItem.target = self
         appMenu.addItem(NSMenuItem.separator())
-        appMenu.addItem(withTitle: "Завершить \(appDisplayName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L("Завершить \(appDisplayName)", "Quit \(appDisplayName)"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         mainMenu.addItem(appItem)
 
         let fileItem = NSMenuItem()
-        let fileMenu = NSMenu(title: "Файл")
-        fileMenu.addItem(withTitle: "Дублировать текущую вкладку", action: #selector(newWindow(_:)), keyEquivalent: "n")
-        fileMenu.addItem(withTitle: "Новая вкладка", action: #selector(newTab(_:)), keyEquivalent: "t")
-        let reopenTabItem = fileMenu.addItem(withTitle: "Открыть закрытую вкладку", action: #selector(reopenClosedTab(_:)), keyEquivalent: "t")
+        let fileMenu = NSMenu(title: L("Файл", "File"))
+        fileMenu.addItem(withTitle: L("Дублировать текущую вкладку", "Duplicate Current Tab"), action: #selector(newWindow(_:)), keyEquivalent: "n")
+        fileMenu.addItem(withTitle: L("Новая вкладка", "New Tab"), action: #selector(newTab(_:)), keyEquivalent: "t")
+        let reopenTabItem = fileMenu.addItem(withTitle: L("Открыть закрытую вкладку", "Reopen Closed Tab"), action: #selector(reopenClosedTab(_:)), keyEquivalent: "t")
         reopenTabItem.keyEquivalentModifierMask = [.command, .shift]
-        fileMenu.addItem(withTitle: "Закрыть вкладку", action: #selector(closeTab(_:)), keyEquivalent: "w")
-        fileMenu.addItem(withTitle: "Открыть папку...", action: #selector(openFolder(_:)), keyEquivalent: "o")
-        fileMenu.addItem(withTitle: "Новая папка", action: #selector(newFolder(_:)), keyEquivalent: "N")
-        fileMenu.addItem(withTitle: "Переименовать", action: #selector(renameSelection(_:)), keyEquivalent: "\r")
-        let batchRename = fileMenu.addItem(withTitle: "Пакетное переименование...", action: #selector(batchRenameSelection(_:)), keyEquivalent: "r")
+        fileMenu.addItem(withTitle: L("Закрыть вкладку", "Close Tab"), action: #selector(closeTab(_:)), keyEquivalent: "w")
+        fileMenu.addItem(withTitle: L("Открыть папку…", "Open Folder…"), action: #selector(openFolder(_:)), keyEquivalent: "o")
+        fileMenu.addItem(withTitle: L("Новая папка", "New Folder"), action: #selector(newFolder(_:)), keyEquivalent: "N")
+        fileMenu.addItem(withTitle: L("Переименовать", "Rename"), action: #selector(renameSelection(_:)), keyEquivalent: "\r")
+        let batchRename = fileMenu.addItem(withTitle: L("Пакетное переименование…", "Batch Rename…"), action: #selector(batchRenameSelection(_:)), keyEquivalent: "r")
         batchRename.keyEquivalentModifierMask = [.command, .shift]
-        fileMenu.addItem(withTitle: "Инспектор", action: #selector(inspectSelection(_:)), keyEquivalent: "i")
+        fileMenu.addItem(withTitle: L("Инспектор", "Inspector"), action: #selector(inspectSelection(_:)), keyEquivalent: "i")
         fileMenu.addItem(NSMenuItem.separator())
-        let copyPathItem = fileMenu.addItem(withTitle: "Скопировать путь", action: #selector(copyPaths(_:)), keyEquivalent: "c")
+        let copyPathItem = fileMenu.addItem(withTitle: L("Скопировать путь", "Copy Path"), action: #selector(copyPaths(_:)), keyEquivalent: "c")
         copyPathItem.keyEquivalentModifierMask = [.command, .shift]
-        let revealItem = fileMenu.addItem(withTitle: "Показать в Finder", action: #selector(revealSelection(_:)), keyEquivalent: "r")
+        let revealItem = fileMenu.addItem(withTitle: L("Показать в Finder", "Reveal in Finder"), action: #selector(revealSelection(_:)), keyEquivalent: "r")
         revealItem.keyEquivalentModifierMask = [.command, .control]
         fileMenu.addItem(.separator())
         let logItem = fileMenu.addItem(
-            withTitle: "Журнал действий…",
+            withTitle: L("Журнал действий…", "Action Log…"),
             action: #selector(revealActionLog(_:)),
             keyEquivalent: ""
         )
         logItem.target = self
-        logItem.toolTip = "Открыть файл журнала: в нём видно, что и когда нажималось"
-        fileMenu.addItem(withTitle: "Переместить в корзину", action: #selector(trashSelection(_:)), keyEquivalent: "\u{8}")
+        logItem.toolTip = L("Открыть файл журнала: в нём видно, что и когда нажималось", "Reveal the action log file")
+        fileMenu.addItem(withTitle: L("Переместить в корзину", "Move to Trash"), action: #selector(trashSelection(_:)), keyEquivalent: "\u{8}")
         fileItem.submenu = fileMenu
         mainMenu.addItem(fileItem)
 
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Правка")
-        let undoItem = editMenu.addItem(withTitle: "Отменить", action: #selector(undoFileOperation(_:)), keyEquivalent: "z")
-        let redoItem = editMenu.addItem(withTitle: "Повторить", action: #selector(redoFileOperation(_:)), keyEquivalent: "z")
+        let editMenu = NSMenu(title: L("Правка", "Edit"))
+        let undoItem = editMenu.addItem(withTitle: L("Отменить", "Undo"), action: #selector(undoFileOperation(_:)), keyEquivalent: "z")
+        let redoItem = editMenu.addItem(withTitle: L("Повторить", "Redo"), action: #selector(redoFileOperation(_:)), keyEquivalent: "z")
         undoItem.target = self
         redoItem.target = self
         redoItem.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(NSMenuItem.separator())
-        let cutItem = editMenu.addItem(withTitle: "Вырезать", action: #selector(cutFiles(_:)), keyEquivalent: "x")
-        let copyItem = editMenu.addItem(withTitle: "Копировать", action: #selector(copyFiles(_:)), keyEquivalent: "c")
-        let pasteItem = editMenu.addItem(withTitle: "Вставить", action: #selector(pasteFiles(_:)), keyEquivalent: "v")
+        let cutItem = editMenu.addItem(withTitle: L("Вырезать", "Cut"), action: #selector(cutFiles(_:)), keyEquivalent: "x")
+        let copyItem = editMenu.addItem(withTitle: L("Копировать", "Copy"), action: #selector(copyFiles(_:)), keyEquivalent: "c")
+        let pasteItem = editMenu.addItem(withTitle: L("Вставить", "Paste"), action: #selector(pasteFiles(_:)), keyEquivalent: "v")
         [cutItem, copyItem, pasteItem].forEach { $0.target = self }
-        editMenu.addItem(withTitle: "Выбрать всё", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: L("Выбрать всё", "Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
         mainMenu.addItem(editItem)
 
         let goItem = NSMenuItem()
-        let goMenu = NSMenu(title: "Переход")
+        let goMenu = NSMenu(title: L("Переход", "Go"))
         let historyBack = goMenu.addItem(
-            withTitle: "Назад",
+            withTitle: L("Назад", "Back"),
             action: #selector(goBack(_:)),
             keyEquivalent: "\u{F702}"
         )
         historyBack.keyEquivalentModifierMask = [.command]
         let historyForward = goMenu.addItem(
-            withTitle: "Вперёд",
+            withTitle: L("Вперёд", "Forward"),
             action: #selector(goForward(_:)),
             keyEquivalent: "\u{F703}"
         )
         historyForward.keyEquivalentModifierMask = [.command]
-        let goUpItem = goMenu.addItem(withTitle: "В родительскую папку", action: #selector(goUp(_:)), keyEquivalent: "\u{F700}")
+        let goUpItem = goMenu.addItem(withTitle: L("В родительскую папку", "Enclosing Folder"), action: #selector(goUp(_:)), keyEquivalent: "\u{F700}")
         goUpItem.keyEquivalentModifierMask = [.command]
-        let recentsItem = goMenu.addItem(withTitle: "Недавние файлы и папки", action: #selector(openRecents(_:)), keyEquivalent: "r")
+        let fuzzyJumpItem = goMenu.addItem(withTitle: L("Быстрый переход к папке…", "Fuzzy Jump to Folder…"), action: #selector(showFuzzyJump(_:)), keyEquivalent: "j")
+        fuzzyJumpItem.keyEquivalentModifierMask = [.command]
+        let recentsItem = goMenu.addItem(withTitle: L("Недавние файлы и папки", "Recent Files & Folders"), action: #selector(openRecents(_:)), keyEquivalent: "r")
         recentsItem.keyEquivalentModifierMask = [.command, .option]
         goMenu.addItem(NSMenuItem.separator())
         for number in 1...9 {
-            let title = number == 9 ? "Последняя вкладка" : "Вкладка \(number)"
+            let title = number == 9 ? L("Последняя вкладка", "Last Tab") : L("Вкладка \(number)", "Tab \(number)")
             let item = goMenu.addItem(
                 withTitle: title,
                 action: #selector(selectTabByNumber(_:)),
@@ -378,38 +386,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         mainMenu.addItem(goItem)
 
         let viewItem = NSMenuItem()
-        let viewMenu = NSMenu(title: "Вид")
-        let quickLook = NSMenuItem(title: "Быстрый просмотр", action: #selector(quickLook(_:)), keyEquivalent: " ")
+        let viewMenu = NSMenu(title: L("Вид", "View"))
+        let quickLook = NSMenuItem(title: L("Быстрый просмотр", "Quick Preview"), action: #selector(quickLook(_:)), keyEquivalent: " ")
         quickLook.keyEquivalentModifierMask = []
         viewMenu.addItem(quickLook)
         let previewPanelItem = viewMenu.addItem(
-            withTitle: "Панель предпросмотра",
+            withTitle: L("Панель предпросмотра", "Preview & Inspector Sidebar"),
             action: #selector(togglePreview(_:)),
             keyEquivalent: "p"
         )
         previewPanelItem.keyEquivalentModifierMask = [.command, .option]
-        viewMenu.addItem(withTitle: "Новая панель", action: #selector(splitPane(_:)), keyEquivalent: "d")
-        viewMenu.addItem(withTitle: "Обновить", action: #selector(reload(_:)), keyEquivalent: "r")
-        viewMenu.addItem(withTitle: "Скрытые файлы", action: #selector(toggleHidden(_:)), keyEquivalent: ".")
-        viewMenu.addItem(withTitle: "Фокус на путь", action: #selector(focusPath(_:)), keyEquivalent: "l")
-        viewMenu.addItem(withTitle: "Фокус на поиск", action: #selector(focusSearch(_:)), keyEquivalent: "f")
-        viewMenu.addItem(withTitle: "Переключить список / плитку", action: #selector(toggleViewMode(_:)), keyEquivalent: "")
-        let shelfItem = viewMenu.addItem(withTitle: "Полка сбора", action: #selector(showDropShelf(_:)), keyEquivalent: "s")
+        viewMenu.addItem(withTitle: L("Новая панель", "Split Pane"), action: #selector(splitPane(_:)), keyEquivalent: "d")
+        viewMenu.addItem(withTitle: L("Обновить", "Refresh"), action: #selector(reload(_:)), keyEquivalent: "r")
+        viewMenu.addItem(withTitle: L("Скрытые файлы", "Show Hidden Files"), action: #selector(toggleHidden(_:)), keyEquivalent: ".")
+        viewMenu.addItem(withTitle: L("Фокус на путь", "Focus Path"), action: #selector(focusPath(_:)), keyEquivalent: "l")
+        viewMenu.addItem(withTitle: L("Фокус на поиск", "Focus Search"), action: #selector(focusSearch(_:)), keyEquivalent: "f")
+        viewMenu.addItem(withTitle: L("Переключить список / плитку", "Toggle List / Grid"), action: #selector(toggleViewMode(_:)), keyEquivalent: "")
+        let shelfItem = viewMenu.addItem(withTitle: L("Полка сбора", "Drop Shelf"), action: #selector(showDropShelf(_:)), keyEquivalent: "s")
         shelfItem.keyEquivalentModifierMask = [.command, .option]
-        let diskAnalyzerItem = viewMenu.addItem(withTitle: "Где пропало место?", action: #selector(showDiskAnalyzer(_:)), keyEquivalent: "d")
+        let diskAnalyzerItem = viewMenu.addItem(withTitle: L("Где пропало место?", "Disk Analyzer & Duplicates"), action: #selector(showDiskAnalyzer(_:)), keyEquivalent: "d")
         diskAnalyzerItem.keyEquivalentModifierMask = [.command, .option]
-        let cycleLayoutItem = viewMenu.addItem(withTitle: "Сменить макет окна (Студия / Подиум / Рейл / Сайдбар)", action: #selector(cycleWorkspaceLayout(_:)), keyEquivalent: "l")
+        let cycleLayoutItem = viewMenu.addItem(withTitle: L("Сменить макет окна", "Cycle Window Layout"), action: #selector(cycleWorkspaceLayout(_:)), keyEquivalent: "l")
         cycleLayoutItem.keyEquivalentModifierMask = [.command, .control]
-        viewMenu.addItem(withTitle: "Буфер обмена", action: #selector(showClipboard(_:)), keyEquivalent: "")
-        viewMenu.addItem(withTitle: "Палитра команд...", action: #selector(showCommandPalette(_:)), keyEquivalent: "k")
+        viewMenu.addItem(withTitle: L("Буфер обмена", "Clipboard History"), action: #selector(showClipboard(_:)), keyEquivalent: "")
+        viewMenu.addItem(withTitle: L("Палитра команд…", "Command Palette…"), action: #selector(showCommandPalette(_:)), keyEquivalent: "k")
         viewItem.submenu = viewMenu
         mainMenu.addItem(viewItem)
 
         let windowItem = NSMenuItem()
-        let windowMenu = NSMenu(title: "Окно")
-        // Глобальный ⌘E перехватывается Carbon-хоткеем раньше меню; пункт меню
-        // остаётся для мыши и как подсказка о сочетании клавиш.
-        windowMenu.addItem(withTitle: "Показать или скрыть Qyvro", action: #selector(summonExplorerWindow(_:)), keyEquivalent: "e")
+        let windowMenu = NSMenu(title: L("Окно", "Window"))
+        windowMenu.addItem(withTitle: L("Показать или скрыть Qyvro", "Show or Hide Qyvro"), action: #selector(summonExplorerWindow(_:)), keyEquivalent: "e")
         windowItem.submenu = windowMenu
         mainMenu.addItem(windowItem)
 
@@ -420,6 +426,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
 
         NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func languageChanged(_ notification: Notification) {
+        buildMenu()
+        if let settings = settingsWindowController {
+            let wasVisible = settings.window?.isVisible == true
+            settings.close()
+            settingsWindowController = nil
+            if wasVisible {
+                showSettings(nil)
+            }
+        }
+        windowControllers.forEach { $0.workspace.refreshLocalization() }
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        QyvroUpdateChecker.shared.checkForUpdates(interactive: true)
+    }
+
+    @objc func showFuzzyJump(_ sender: Any?) {
+        if fuzzyJumpController == nil {
+            fuzzyJumpController = QyvroFuzzyJumpController()
+        }
+        let currentFolder = activeWorkspace?.activeFolderURL ?? FileManager.default.homeDirectoryForCurrentUser
+        let openTabs = activeWorkspace?.openTabURLs ?? []
+        fuzzyJumpController?.present(currentFolder: currentFolder, openTabURLs: openTabs) { [weak self] url, inNewTab in
+            guard let workspace = self?.activeWorkspace else { return }
+            if inNewTab {
+                workspace.openURLInNewTab(url)
+            } else {
+                workspace.openURLInActivePanel(url)
+            }
+        }
     }
 
     @objc func showSettings(_ sender: Any?) {
@@ -461,48 +500,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             commandPaletteController = CommandPaletteController()
         }
         let commands: [FPCommandEntry] = [
-            FPCommandEntry(title: "Макет: Студия · Остров (V4)", subtitle: "Парящая скруглённая сцена, крупный заголовок, встроенный поиск и капсулы фильтров", symbol: "macwindow.on.rectangle") {
+            FPCommandEntry(title: L("Быстрый переход к папке (Fuzzy Jump)", "Fuzzy Jump to Folder"), subtitle: L("Мгновенный поиск по недавним, закладкам и подпапкам — ⌘J", "Jump across recent folders, bookmarks, and subfolders — ⌘J"), symbol: "bolt.horizontal.fill") { [weak self] in self?.showFuzzyJump(nil) },
+            FPCommandEntry(title: L("Макет: Студия · Остров (V4)", "Layout: Studio · Island (V4)"), subtitle: L("Парящая скруглённая сцена, крупный заголовок и капсулы фильтров", "Frameless floating canvas, unified hero header, and recessed filter tray"), symbol: "macwindow.on.rectangle") {
                 QyvroWorkspaceLayout.setCurrent(.studioCanvas)
             },
-            FPCommandEntry(title: "Макет: Подиум (док снизу)", subtitle: "Широкая галерея без боковой панели и плавающий стеклянный док", symbol: "dock.rectangle") {
+            FPCommandEntry(title: L("Макет: Подиум (док снизу)", "Layout: Podium (Bottom Dock)"), subtitle: L("Широкая галерея без боковой панели и плавающий стеклянный док", "Wide gallery with floating glass bottom dock"), symbol: "dock.rectangle") {
                 QyvroWorkspaceLayout.setCurrent(.floatingDock)
             },
-            FPCommandEntry(title: "Макет: Рейл (узкая панель)", subtitle: "Скульптурная иконочная рейка слева с кольцом диска и вкладки снизу", symbol: "sidebar.squares.leading") {
+            FPCommandEntry(title: L("Макет: Рейл (узкая панель)", "Layout: Edge Rail"), subtitle: L("Иконочная рейка слева с кольцом диска и вкладки снизу", "Slim vertical icon rail with disk ring"), symbol: "sidebar.squares.leading") {
                 QyvroWorkspaceLayout.setCurrent(.edgeRail)
             },
-            FPCommandEntry(title: "Макет: Сайдбар (классика)", subtitle: "Полноразмерная боковая панель слева и вкладки сверху", symbol: "sidebar.left") {
+            FPCommandEntry(title: L("Макет: Сайдбар (классика)", "Layout: Classic Sidebar"), subtitle: L("Полноразмерная боковая панель слева и вкладки сверху", "Full Finder-style sidebar and top tabs"), symbol: "sidebar.left") {
                 QyvroWorkspaceLayout.setCurrent(.classicSidebar)
             },
-            FPCommandEntry(title: "Папки: Графит + корешок", subtitle: "Минималистичная тёмная обложка с приглушённым корешком темы", symbol: "folder") {
+            FPCommandEntry(title: L("Папки: Графит + корешок", "Folders: Graphite + Spine"), subtitle: L("Минималистичная тёмная обложка с приглушённым корешком темы", "Minimalist matte graphite front with muted theme spine"), symbol: "folder") {
                 FPFolderIconStyle.setCurrent(.matteDuo)
             },
-            FPCommandEntry(title: "Папки: Тёмный сатин", subtitle: "Монохромная матовая папка в глубоком тоне темы", symbol: "folder.fill") {
+            FPCommandEntry(title: L("Папки: Тёмный сатин", "Folders: Dark Satin"), subtitle: L("Монохромная матовая папка в глубоком тоне темы", "Monotone deep-tinted matte folder"), symbol: "folder.fill") {
                 FPFolderIconStyle.setCurrent(.monotoneSatin)
             },
-            FPCommandEntry(title: "Папки: Швейцарский кант", subtitle: "Матовый графит с тонкой акцентной линией в сгибе", symbol: "folder.badge.gearshape") {
+            FPCommandEntry(title: L("Папки: Швейцарский кант", "Folders: Swiss Seam"), subtitle: L("Матовый графит с тонкой акцентной линией в сгибе", "Matte graphite with a crisp accent hairline seam"), symbol: "folder.badge.gearshape") {
                 FPFolderIconStyle.setCurrent(.swissSeam)
             },
-            FPCommandEntry(title: "Недавние файлы и папки", subtitle: "Все новые загрузки и файлы по дате создания — ⌥⌘R", symbol: "clock.arrow.circlepath") { [weak self] in self?.openRecents(nil) },
-            FPCommandEntry(title: "Полка временного сбора", subtitle: "Собрать файлы из разных папок и перенести пачкой — ⌥⌘S", symbol: "tray.and.arrow.down") { [weak self] in self?.showDropShelf(nil) },
-            FPCommandEntry(title: "Где пропало место?", subtitle: "Анализ тяжёлых папок и очистка диска — ⌥⌘D", symbol: "chart.pie.fill") { [weak self] in self?.showDiskAnalyzer(nil) },
-            FPCommandEntry(title: "Новая вкладка", subtitle: "Открыть текущую папку в соседней вкладке", symbol: "plus.square") { [weak self] in self?.activeWorkspace?.newTab(nil) },
-            FPCommandEntry(title: "Новая панель", subtitle: "Разделить текущее окно", symbol: "rectangle.split.2x1") { [weak self] in self?.activeWorkspace?.splitPane(nil) },
-            FPCommandEntry(title: "Новая папка", subtitle: "Создать папку в текущем каталоге", symbol: "folder.badge.plus") { [weak self] in self?.activeWorkspace?.newFolder(nil) },
-            FPCommandEntry(title: "Новый текстовый файл", subtitle: "Создать пустой .txt и сразу переименовать", symbol: "doc.badge.plus") { [weak self] in self?.activeWorkspace?.newTextFile(nil) },
-            FPCommandEntry(title: "Быстрый просмотр", subtitle: "Открыть выбранные объекты через Quick Look", symbol: "eye") { [weak self] in self?.activeWorkspace?.quickLook(nil) },
-            FPCommandEntry(title: "Панель предпросмотра", subtitle: "Показать сведения справа — ⌥⌘P", symbol: "sidebar.right") { [weak self] in self?.activeWorkspace?.togglePreview(nil) },
-            FPCommandEntry(title: "Инспектор", subtitle: "Показать сведения о выбранных объектах", symbol: "info.circle") { [weak self] in self?.activeWorkspace?.inspectSelection(nil) },
-            FPCommandEntry(title: "Пакетное переименование", subtitle: "Переименовать несколько выбранных объектов", symbol: "textformat") { [weak self] in self?.activeWorkspace?.batchRenameSelection(nil) },
-            FPCommandEntry(title: "Копировать файлы", subtitle: "Скопировать выбранные объекты — ⌘C", symbol: "doc.on.doc") { [weak self] in self?.activeWorkspace?.copyFiles(nil) },
-            FPCommandEntry(title: "Вырезать файлы", subtitle: "Подготовить выбранные объекты к перемещению — ⌘X", symbol: "scissors") { [weak self] in self?.activeWorkspace?.cutFiles(nil) },
-            FPCommandEntry(title: "Вставить файлы", subtitle: "Вставить в текущую папку — ⌘V", symbol: "doc.on.clipboard") { [weak self] in self?.activeWorkspace?.pasteFiles(nil) },
-            FPCommandEntry(title: "Дублировать", subtitle: "Создать копии выбранных объектов", symbol: "plus.square.on.square") { [weak self] in self?.activeWorkspace?.duplicateSelection(nil) },
-            FPCommandEntry(title: "Открыть в Terminal", subtitle: "Открыть текущую или выбранную папку в Terminal", symbol: "terminal") { [weak self] in self?.activeWorkspace?.openInTerminal(nil) },
-            FPCommandEntry(title: "Список / плитка", subtitle: "Переключить представление текущей папки", symbol: "square.grid.2x2") { [weak self] in self?.activeWorkspace?.toggleViewMode(nil) },
-            FPCommandEntry(title: "Фокус на путь", subtitle: "Перейти к строке текущего пути", symbol: "location") { [weak self] in self?.activeWorkspace?.focusPath(nil) },
-            FPCommandEntry(title: "Фокус на поиск", subtitle: "Искать в текущей папке", symbol: "magnifyingglass") { [weak self] in self?.activeWorkspace?.focusSearch(nil) },
-            FPCommandEntry(title: "Буфер обмена", subtitle: "Показать историю скопированного — \(QyvroClipboardShortcut.displayName)", symbol: "clipboard") { [weak self] in self?.showClipboard(nil) },
-            FPCommandEntry(title: "Настройки", subtitle: "Темы, прозрачность, сетка и жесты", symbol: "slider.horizontal.3") { [weak self] in self?.showSettings(nil) }
+            FPCommandEntry(title: L("Язык интерфейса: Русский / English", "Switch Language: English / Русский"), subtitle: L("Мгновенно переключить язык приложения", "Toggle interface language immediately"), symbol: "globe") {
+                FPLocalization.selectedLanguage = FPLocalization.isEnglish ? .ru : .en
+            },
+            FPCommandEntry(title: L("Проверить обновления…", "Check for Updates…"), subtitle: L("Проверить последний релиз Qyvro на GitHub", "Check latest Qyvro release on GitHub"), symbol: "arrow.triangle.2.circlepath") { [weak self] in self?.checkForUpdates(nil) },
+            FPCommandEntry(title: L("Недавние файлы и папки", "Recent Files & Folders"), subtitle: L("Все новые загрузки и файлы по дате создания — ⌥⌘R", "Recently created and downloaded items — ⌥⌘R"), symbol: "clock.arrow.circlepath") { [weak self] in self?.openRecents(nil) },
+            FPCommandEntry(title: L("Полка временного сбора", "Drop Shelf"), subtitle: L("Собрать файлы из разных папок и перенести пачкой — ⌥⌘S", "Stage files across folders and move, copy, or drag out — ⌥⌘S"), symbol: "tray.and.arrow.down") { [weak self] in self?.showDropShelf(nil) },
+            FPCommandEntry(title: L("Где пропало место? / Дубликаты SHA-256", "Disk Analyzer & SHA-256 Duplicates"), subtitle: L("Анализ тяжёлых папок, файлов и точных дубликатов — ⌥⌘D", "Analyze large folders, heavy files, and exact duplicates — ⌥⌘D"), symbol: "chart.pie.fill") { [weak self] in self?.showDiskAnalyzer(nil) },
+            FPCommandEntry(title: L("Новая вкладка", "New Tab"), subtitle: L("Открыть текущую папку в соседней вкладке", "Open current folder in a new tab"), symbol: "plus.square") { [weak self] in self?.activeWorkspace?.newTab(nil) },
+            FPCommandEntry(title: L("Новая панель", "Split Pane"), subtitle: L("Разделить текущее окно", "Split active window side by side"), symbol: "rectangle.split.2x1") { [weak self] in self?.activeWorkspace?.splitPane(nil) },
+            FPCommandEntry(title: L("Новая папка", "New Folder"), subtitle: L("Создать папку в текущем каталоге", "Create a new folder here"), symbol: "folder.badge.plus") { [weak self] in self?.activeWorkspace?.newFolder(nil) },
+            FPCommandEntry(title: L("Новый текстовый файл", "New Text File"), subtitle: L("Создать пустой .txt и сразу переименовать", "Create an empty .txt file"), symbol: "doc.badge.plus") { [weak self] in self?.activeWorkspace?.newTextFile(nil) },
+            FPCommandEntry(title: L("Быстрый просмотр", "Quick Preview"), subtitle: L("Открыть выбранные объекты в просмотрщике — Space", "Open built-in media viewer — Space"), symbol: "eye") { [weak self] in self?.activeWorkspace?.quickLook(nil) },
+            FPCommandEntry(title: L("Панель предпросмотра", "Preview & Inspector Sidebar"), subtitle: L("Показать сведения справа — ⌥⌘P", "Toggle right-side inspector — ⌥⌘P"), symbol: "sidebar.right") { [weak self] in self?.activeWorkspace?.togglePreview(nil) },
+            FPCommandEntry(title: L("Пакетное переименование", "Studio Batch Rename"), subtitle: L("Переименовать несколько выбранных объектов — ⌘⇧R", "Batch rename with live preview — ⌘⇧R"), symbol: "textformat") { [weak self] in self?.activeWorkspace?.batchRenameSelection(nil) },
+            FPCommandEntry(title: L("Открыть в Terminal", "Open in Terminal"), subtitle: L("Открыть текущую или выбранную папку в Terminal", "Open current folder in Terminal"), symbol: "terminal") { [weak self] in self?.activeWorkspace?.openInTerminal(nil) },
+            FPCommandEntry(title: L("Список / плитка", "Toggle List / Grid"), subtitle: L("Переключить представление текущей папки", "Switch current folder view mode"), symbol: "square.grid.2x2") { [weak self] in self?.activeWorkspace?.toggleViewMode(nil) },
+            FPCommandEntry(title: L("Буфер обмена", "Clipboard History"), subtitle: L("Показать историю скопированного — \(QyvroClipboardShortcut.displayName)", "Open clipboard history — \(QyvroClipboardShortcut.displayName)"), symbol: "clipboard") { [weak self] in self?.showClipboard(nil) },
+            FPCommandEntry(title: L("Настройки", "Settings"), subtitle: L("Темы, язык, прозрачность, сетка и жесты — ⌘,", "Themes, language, opacity, grid, and gestures — ⌘,"), symbol: "slider.horizontal.3") { [weak self] in self?.showSettings(nil) }
         ]
         commandPaletteController?.show(commands: commands)
     }
@@ -510,18 +547,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(undoFileOperation(_:)) {
             if let title = QyvroFileOperationHistory.shared.undoTitle {
-                menuItem.title = "Отменить \(title)"
+                menuItem.title = L("Отменить \(title)", "Undo \(title)")
                 return QyvroFileOperationHistory.shared.canUndo
             }
-            menuItem.title = "Отменить"
+            menuItem.title = L("Отменить", "Undo")
             return NSApp.keyWindow?.firstResponder?.undoManager?.canUndo ?? false
         }
         if menuItem.action == #selector(redoFileOperation(_:)) {
             if let title = QyvroFileOperationHistory.shared.redoTitle {
-                menuItem.title = "Повторить \(title)"
+                menuItem.title = L("Повторить \(title)", "Redo \(title)")
                 return QyvroFileOperationHistory.shared.canRedo
             }
-            menuItem.title = "Повторить"
+            menuItem.title = L("Повторить", "Redo")
             return NSApp.keyWindow?.firstResponder?.undoManager?.canRedo ?? false
         }
         if menuItem.action == #selector(toggleHidden(_:)) {

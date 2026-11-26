@@ -428,7 +428,7 @@ final class QyvroDropShelfController: NSWindowController {
     private let store: QyvroDropShelfStore
     private let onTransfer: ([URL], Bool) -> Bool
     private let backdrop = FPAuxiliaryBackdrop(frame: .zero)
-    private let titleLabel = NSTextField(labelWithString: "ПОЛКА СБОРА")
+    private let titleLabel = NSTextField(labelWithString: L("ПОЛКА СБОРА", "DROP SHELF"))
     private let clearButton = NSButton()
     private let batchDragView = QyvroShelfBatchDragView()
     private let listStack = NSStackView()
@@ -446,7 +446,7 @@ final class QyvroDropShelfController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        panel.title = "Полка сбора"
+        panel.title = L("Полка сбора", "Drop Shelf")
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
         panel.isMovableByWindowBackground = true
@@ -501,9 +501,9 @@ final class QyvroDropShelfController: NSWindowController {
         titleLabel.font = FPStyle.headingFont(ofSize: 11.5, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        configurePillButton(clearButton, title: "Очистить", symbol: "trash", tint: FPStyle.danger, action: #selector(clearShelf(_:)))
-        configurePillButton(moveHereButton, title: "Перенести сюда", symbol: "arrow.right.doc.on.clipboard", tint: FPStyle.accent, action: #selector(moveAllHere(_:)))
-        configurePillButton(copyHereButton, title: "Скопировать сюда", symbol: "doc.on.doc", tint: FPStyle.text, action: #selector(copyAllHere(_:)))
+        configurePillButton(clearButton, title: L("Очистить", "Clear"), symbol: "trash", tint: FPStyle.danger, action: #selector(clearShelf(_:)))
+        configurePillButton(moveHereButton, title: L("Перенести сюда", "Move Here"), symbol: "arrow.right.doc.on.clipboard", tint: FPStyle.accent, action: #selector(moveAllHere(_:)))
+        configurePillButton(copyHereButton, title: L("Скопировать сюда", "Copy Here"), symbol: "doc.on.doc", tint: FPStyle.text, action: #selector(copyAllHere(_:)))
 
         batchDragView.urlsProvider = { [weak self] in
             self?.store.urls ?? []

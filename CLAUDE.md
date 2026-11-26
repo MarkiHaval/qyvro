@@ -78,7 +78,12 @@ Available smoke suites (11):
 | `CloudClipboardSync.swift` | Optional cross-device cloud clipboard client (`⌃⌘V`) |
 | `FinderTagStore.swift` | Two-stage marking backed by native macOS Finder xattr tags |
 | `FileOperationHistory.swift` | Undo/Redo stack for file moves, renames, and trash operations |
-| `SettingsAndCommands.swift` | Appearance/behavior settings window and Command Palette (`⌘K`) |
+| `SettingsAndCommands.swift` | Appearance/behavior settings window, language picker, update button, and Command Palette (`⌘K`) |
+| `Localization.swift` | Lightweight RU/EN bilingual helper (`L(_:_:)`) with System Auto / manual toggle |
+| `UpdateChecker.swift` | Silent, user-initiated GitHub Releases update checker |
+| `FuzzyJumpPalette.swift` | Fuzzy folder jump modal (`⌘J`) across bookmarks, open tabs, recent folders, and subfolders |
+| `ZipArchiveBrowser.swift` | Pure-Swift ZIP Central Directory reader + on-demand single-entry preview & extraction |
+| `FontAndGitSupport.swift` | CoreText font grid thumbnails & specimen sheets, theme color swatches, async Git branch badge |
 | `SavedTabGroups.swift`, `CutFileState.swift`, `RenameSheet.swift`, `BreadcrumbPathView.swift`, `JumpScroller.swift`, `UIComponents.swift`, `WindowPresentationAnimator.swift`, `WindowResizeOverlay.swift` | Focused UI and workflow modules |
 
 ---

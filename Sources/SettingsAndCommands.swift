@@ -274,6 +274,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private weak var backgroundTintView: FPBackgroundTintView?
     private let layoutPopup = NSPopUpButton()
     private let folderStylePopup = NSPopUpButton()
+    private let languagePopup = NSPopUpButton()
     private let presetPopup = NSPopUpButton()
     private let windowColor = ThemeColorWell()
     private let paneColor = ThemeColorWell()
@@ -304,10 +305,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
     private let swipeWaveGlow = NSSlider()
     private let swipeWaveTint = NSSlider()
     private let swipeWaveTilt = NSSlider()
-    private let invertedSwipe = NSButton(checkboxWithTitle: "Вправо = назад", target: nil, action: nil)
-    private let grouped = NSButton(checkboxWithTitle: "Группы по датам", target: nil, action: nil)
-    private let gradientEnabled = NSButton(checkboxWithTitle: "Мягкий градиент", target: nil, action: nil)
-    private let summonHotKey = NSButton(checkboxWithTitle: "⌘E вызывает Qyvro", target: nil, action: nil)
+    private let invertedSwipe = NSButton(checkboxWithTitle: L("Вправо = назад", "Swipe right = back"), target: nil, action: nil)
+    private let grouped = NSButton(checkboxWithTitle: L("Группы по датам", "Group by date"), target: nil, action: nil)
+    private let gradientEnabled = NSButton(checkboxWithTitle: L("Мягкий градиент", "Deep-glow gradient"), target: nil, action: nil)
+    private let summonHotKey = NSButton(checkboxWithTitle: L("⌘E вызывает Qyvro", "⌘E summons Qyvro"), target: nil, action: nil)
     private var valueLabels: [ObjectIdentifier: NSTextField] = [:]
     private var suppressChanges = false
     private var userThemes: [FPUserTheme] = []
@@ -424,11 +425,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
             themeTint.bottomAnchor.constraint(equalTo: effect.bottomAnchor)
         ])
 
-        let title = NSTextField(labelWithString: "НАСТРОЙКИ")
+        let title = NSTextField(labelWithString: L("НАСТРОЙКИ", "SETTINGS"))
         // Заголовок как рубрики проводника, а не системным полужирным.
         title.font = FPStyle.headingFont(ofSize: 17, weight: .semibold)
         title.textColor = FPStyle.text
-        let subtitle = NSTextField(labelWithString: "Изменения сразу видны во всех окнах проводника")
+        let subtitle = NSTextField(labelWithString: L("Изменения сразу видны во всех окнах проводника", "Changes apply live across all explorer windows"))
         subtitle.font = FPStyle.bodyFont(ofSize: 11, weight: .regular)
         subtitle.textColor = FPStyle.dimText
         let heading = NSStackView(views: [title, subtitle])
@@ -451,7 +452,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         presetPopup.action = #selector(presetChanged(_:))
         presetPopup.widthAnchor.constraint(equalToConstant: 210).isActive = true
         rebuildPresetMenu()
-        let savePreset = actionButton("Сохранить", symbol: "plus", action: #selector(savePreset(_:)))
+        let savePreset = actionButton(L("Сохранить", "Save"), symbol: "plus", action: #selector(savePreset(_:)))
         let deletePreset = actionButton("", symbol: "trash", action: #selector(deletePreset(_:)))
         let presetControls = NSStackView(views: [layoutPopup, presetPopup, savePreset, deletePreset])
         presetControls.orientation = .horizontal
@@ -503,43 +504,55 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         }
         folderStylePopup.widthAnchor.constraint(equalToConstant: 156).isActive = true
 
-        let appearance = settingsSection(title: "Оформление", rows: [
-            popupRow("Стиль папок", folderStylePopup),
-            colorRow("Фон окна", windowColor),
-            colorRow("Фон проводника", paneColor),
-            colorRow("Панель слева", sidebarColor),
-            colorRow("Верхняя панель", barColor),
-            colorRow("Папки", folderColor),
-            colorRow("Лазурный акцент", accentColor),
-            colorRow("Оранжевый акцент", orangeColor),
-            colorRow("Основной текст", textColor),
-            colorRow("Вторичный текст", dimTextColor),
-            colorRow("Окно настроек", settingsWindowColor),
-            colorRow("Окно тегов", tagWindowColor),
-            colorRow("Градиент: начало", gradientStartColor),
-            colorRow("Градиент: конец", gradientEndColor)
+        languagePopup.target = self
+        languagePopup.action = #selector(languageChanged(_:))
+        languagePopup.removeAllItems()
+        for lang in FPAppLanguage.allCases {
+            languagePopup.addItem(withTitle: lang.title)
+        }
+        if let idx = FPAppLanguage.allCases.firstIndex(of: FPLocalization.selectedLanguage) {
+            languagePopup.selectItem(at: idx)
+        }
+        languagePopup.widthAnchor.constraint(equalToConstant: 156).isActive = true
+
+        let appearance = settingsSection(title: L("Оформление", "Appearance"), rows: [
+            popupRow(L("Язык / Language", "Language"), languagePopup),
+            popupRow(L("Стиль папок", "Folder Style"), folderStylePopup),
+            colorRow(L("Фон окна", "Window Base"), windowColor),
+            colorRow(L("Фон проводника", "Pane Surface"), paneColor),
+            colorRow(L("Панель слева", "Sidebar"), sidebarColor),
+            colorRow(L("Верхняя панель", "Toolbar"), barColor),
+            colorRow(L("Папки", "Folder Color"), folderColor),
+            colorRow(L("Акцент 1", "Primary Accent"), accentColor),
+            colorRow(L("Акцент 2", "Warm Accent"), orangeColor),
+            colorRow(L("Основной текст", "Primary Text"), textColor),
+            colorRow(L("Вторичный текст", "Secondary Text"), dimTextColor),
+            colorRow(L("Окно настроек", "Settings Window"), settingsWindowColor),
+            colorRow(L("Окно тегов", "Tags Window"), tagWindowColor),
+            colorRow(L("Градиент: начало", "Gradient Start"), gradientStartColor),
+            colorRow(L("Градиент: конец", "Gradient End"), gradientEndColor)
         ])
-        let behavior = settingsSection(title: "Пространство и управление", rows: [
-            sliderRow("Прозрачность фона", paneOpacity, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Прозрачность слева", sidebarOpacity, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Окно настроек", settingsWindowOpacity, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Окно тегов", tagWindowOpacity, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Расстояние в сетке", gridSpacing, format: { "\(Int($0)) px" }),
-            sliderRow("Чувствительность срабатывания", swipeSensitivity, format: { "\(Int($0))%" }),
-            sliderRow("Анимация панели", sidebarAnimationDuration, format: { String(format: "%.1f c", $0) }),
-            sliderRow("Плавность движения", swipeWaveSmoothness, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Амплитуда волны", swipeWaveStrength, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Ширина волны", swipeWaveWidth, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Размытие волны", swipeWaveBlur, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Экспозиция", swipeWaveExposure, format: { "\(Int($0 * 100))%" }),
+        let behavior = settingsSection(title: L("Пространство и управление", "Workspace & Gestures"), rows: [
+            sliderRow(L("Прозрачность фона", "Pane Opacity"), paneOpacity, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Прозрачность слева", "Sidebar Opacity"), sidebarOpacity, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Окно настроек", "Settings Opacity"), settingsWindowOpacity, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Окно тегов", "Tags Opacity"), tagWindowOpacity, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Расстояние в сетке", "Grid Spacing"), gridSpacing, format: { "\(Int($0)) px" }),
+            sliderRow(L("Чувствительность жеста", "Swipe Sensitivity"), swipeSensitivity, format: { "\(Int($0))%" }),
+            sliderRow(L("Анимация панели", "Panel Animation"), sidebarAnimationDuration, format: { String(format: "%.1f s", $0) }),
+            sliderRow(L("Плавность волны", "Wave Smoothness"), swipeWaveSmoothness, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Амплитуда волны", "Wave Strength"), swipeWaveStrength, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Ширина волны", "Wave Width"), swipeWaveWidth, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Размытие волны", "Wave Blur"), swipeWaveBlur, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Экспозиция", "Exposure"), swipeWaveExposure, format: { "\(Int($0 * 100))%" }),
             sliderRow("Deep glow", swipeWaveGlow, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Цветовой оттенок", swipeWaveTint, format: { "\(Int($0 * 100))%" }),
-            sliderRow("Наклон волны", swipeWaveTilt, format: { "\(Int($0))°" }),
-            sliderRow("Длительность волны", swipeWaveDuration, format: { String(format: "%.2f c", $0) }),
-            toggleRow("Навигация", invertedSwipe),
-            toggleRow("Большие папки", grouped),
-            toggleRow("Градиент", gradientEnabled),
-            toggleRow("Горячая клавиша", summonHotKey)
+            sliderRow(L("Цветовой оттенок", "Color Tint"), swipeWaveTint, format: { "\(Int($0 * 100))%" }),
+            sliderRow(L("Наклон волны", "Wave Tilt"), swipeWaveTilt, format: { "\(Int($0))°" }),
+            sliderRow(L("Длительность волны", "Wave Duration"), swipeWaveDuration, format: { String(format: "%.2f s", $0) }),
+            toggleRow(L("Навигация", "Navigation"), invertedSwipe),
+            toggleRow(L("Большие папки", "Large Folders"), grouped),
+            toggleRow(L("Градиент", "Gradient"), gradientEnabled),
+            toggleRow(L("Горячая клавиша", "Global Hotkey"), summonHotKey)
         ])
 
         let divider = FPLayerView(color: FPStyle.stroke.withAlphaComponent(0.55))
@@ -569,9 +582,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         scroll.borderType = .noBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        let reset = actionButton("Сбросить настройки", symbol: "arrow.counterclockwise", action: #selector(resetSettings(_:)))
-        let clearCache = actionButton("Очистить кэш миниатюр", symbol: "trash.slash", action: #selector(clearThumbnailCache(_:)))
-        let footer = NSStackView(views: [reset, clearCache, NSView()])
+        let reset = actionButton(L("Сбросить настройки", "Reset Defaults"), symbol: "arrow.counterclockwise", action: #selector(resetSettings(_:)))
+        let clearCache = actionButton(L("Очистить кэш", "Clear Cache"), symbol: "trash.slash", action: #selector(clearThumbnailCache(_:)))
+        let checkUpdates = actionButton(
+            L("Обновления (v\(QyvroUpdateChecker.shared.currentVersion))", "Updates (v\(QyvroUpdateChecker.shared.currentVersion))"),
+            symbol: "arrow.triangle.2.circlepath",
+            action: #selector(checkUpdatesPressed(_:))
+        )
+        let footer = NSStackView(views: [reset, clearCache, NSView(), checkUpdates])
         footer.orientation = .horizontal
         footer.spacing = 8
         footer.translatesAutoresizingMaskIntoConstraints = false
@@ -986,10 +1004,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         NotificationCenter.default.post(name: .fpThumbnailCacheDidClear, object: nil)
     }
 
+    @objc private func languageChanged(_ sender: Any?) {
+        let idx = languagePopup.indexOfSelectedItem
+        guard FPAppLanguage.allCases.indices.contains(idx) else { return }
+        FPLocalization.selectedLanguage = FPAppLanguage.allCases[idx]
+    }
+
+    @objc private func checkUpdatesPressed(_ sender: Any?) {
+        QyvroUpdateChecker.shared.checkForUpdates(interactive: true)
+    }
+
     private func rebuildPresetMenu() {
         presetPopup.removeAllItems()
-        presetPopup.addItem(withTitle: "Текущая настройка")
-        FPThemePreset.all.forEach { presetPopup.addItem(withTitle: $0.title) }
+        presetPopup.addItem(withTitle: L("Текущая настройка", "Current Settings"))
+        for preset in FPThemePreset.all {
+            presetPopup.addItem(withTitle: FPLocalization.localizedThemeTitle(preset.title))
+            presetPopup.lastItem?.image = FPThemeSwatchRenderer.swatch(for: preset)
+        }
         userThemes.forEach { presetPopup.addItem(withTitle: $0.name) }
     }
 

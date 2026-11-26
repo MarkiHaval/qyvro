@@ -65,6 +65,59 @@ final class QyvroFileOperationHistory {
         )
     }
 
+    func recordCreated(_ url: URL) {
+        final class CreatedState {
+            let original: URL
+            var trashedURL: URL?
+
+            init(original: URL) {
+                self.original = original.standardizedFileURL
+            }
+
+            var affectedDirectories: [URL] {
+                [original.deletingLastPathComponent().standardizedFileURL]
+            }
+
+            func undo() throws {
+                let fm = FileManager.default
+                guard fm.fileExists(atPath: original.path) else {
+                    throw NSError(
+                        domain: "QyvroHistory",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: L("Файл «\(original.lastPathComponent)» уже удалён", "File \"\(original.lastPathComponent)\" was already removed")]
+                    )
+                }
+                var resulting: NSURL?
+                try fm.trashItem(at: original, resultingItemURL: &resulting)
+                trashedURL = (resulting as URL?)?.standardizedFileURL
+            }
+
+            func redo() throws {
+                let fm = FileManager.default
+                guard let trashedURL, fm.fileExists(atPath: trashedURL.path) else {
+                    throw NSError(
+                        domain: "QyvroHistory",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: L("Не удалось восстановить «\(original.lastPathComponent)» из корзины", "Could not restore \"\(original.lastPathComponent)\" from Trash")]
+                    )
+                }
+                try fm.moveItem(at: trashedURL, to: original)
+                self.trashedURL = nil
+            }
+        }
+
+        let state = CreatedState(original: url)
+        let title = L("создание «\(url.lastPathComponent)»", "create \"\(url.lastPathComponent)\"")
+        record(
+            Entry(
+                title: title,
+                affectedDirectories: state.affectedDirectories,
+                undo: state.undo,
+                redo: state.redo
+            )
+        )
+    }
+
     func recordRename(_ pairs: [(original: URL, renamed: URL)]) {
         let changed = pairs.filter {
             $0.original.standardizedFileURL != $0.renamed.standardizedFileURL
@@ -72,8 +125,8 @@ final class QyvroFileOperationHistory {
         guard !changed.isEmpty else { return }
         let state = RenameState(pairs: changed)
         let title = changed.count == 1
-            ? "переименование «\(changed[0].renamed.lastPathComponent)»"
-            : "переименование \(changed.count) объектов"
+            ? L("переименование «\(changed[0].renamed.lastPathComponent)»", "rename \"\(changed[0].renamed.lastPathComponent)\"")
+            : L("переименование \(changed.count) объектов", "rename \(changed.count) items")
         record(
             Entry(
                 title: title,
@@ -88,8 +141,8 @@ final class QyvroFileOperationHistory {
         guard !records.isEmpty else { return }
         let state = TrashState(records: records)
         let title = records.count == 1
-            ? "перемещение «\(records[0].original.lastPathComponent)» в корзину"
-            : "перемещение \(records.count) объектов в корзину"
+            ? L("перемещение «\(records[0].original.lastPathComponent)» в корзину", "move \"\(records[0].original.lastPathComponent)\" to Trash")
+            : L("перемещение \(records.count) объектов в корзину", "move \(records.count) items to Trash")
         record(
             Entry(
                 title: title,

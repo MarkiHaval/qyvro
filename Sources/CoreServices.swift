@@ -231,7 +231,7 @@ enum FPTileCaption {
     }
 
     static func text(for item: FileItem, media: FPMediaInfo?) -> String {
-        if item.isDirectory { return "Папка" }
+        if item.isDirectory { return L("Папка", "Folder") }
         var parts: [String] = []
         if let media {
             // Тип не дублируется: расширение уже видно в имени строкой выше.
@@ -421,9 +421,9 @@ enum FPFolderIconStyle: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .matteDuo: return "Графит + корешок"
-        case .monotoneSatin: return "Тёмный сатин"
-        case .swissSeam: return "Швейцарский кант"
+        case .matteDuo: return L("Графит + корешок", "Graphite + Spine")
+        case .monotoneSatin: return L("Тёмный сатин", "Dark Satin")
+        case .swissSeam: return L("Швейцарский кант", "Swiss Seam")
         }
     }
 }
@@ -2210,32 +2210,32 @@ enum FPGridFilter: String, CaseIterable {
 
     var title: String {
         switch self {
-        case .all: return "Все файлы"
-        case .images: return "Только картинки"
-        case .videos: return "Только видео"
-        case .flagged: return "★ Отмеченные"
-        case .confirmed: return "★★ Точно берём"
-        case .flaggedToday: return "★ Отмечено сегодня"
-        case .today: return "Сегодня"
-        case .yesterday: return "Вчера"
-        case .week: return "За 7 дней"
-        case .heavy: return "Больше 20 МБ"
+        case .all: return L("Все файлы", "All Files")
+        case .images: return L("Только картинки", "Photos Only")
+        case .videos: return L("Только видео", "Videos Only")
+        case .flagged: return L("★ Отмеченные", "★ Marked")
+        case .confirmed: return L("★★ Точно берём", "★★ Picked")
+        case .flaggedToday: return L("★ Отмечено сегодня", "★ Marked Today")
+        case .today: return L("Сегодня", "Today")
+        case .yesterday: return L("Вчера", "Yesterday")
+        case .week: return L("За 7 дней", "Last 7 Days")
+        case .heavy: return L("Больше 20 МБ", "Over 20 MB")
         }
     }
 
     /// Короткая подпись для кнопки: в нижней панели мало места.
     var shortTitle: String {
         switch self {
-        case .all: return "Фильтр"
-        case .images: return "Картинки"
-        case .videos: return "Видео"
+        case .all: return L("Фильтр", "Filter")
+        case .images: return L("Картинки", "Photos")
+        case .videos: return L("Видео", "Videos")
         case .flagged: return "★"
         case .confirmed: return "★★"
-        case .flaggedToday: return "★ сегодня"
-        case .today: return "Сегодня"
-        case .yesterday: return "Вчера"
-        case .week: return "7 дней"
-        case .heavy: return "> 20 МБ"
+        case .flaggedToday: return L("★ сегодня", "★ today")
+        case .today: return L("Сегодня", "Today")
+        case .yesterday: return L("Вчера", "Yesterday")
+        case .week: return L("7 дней", "7 Days")
+        case .heavy: return L("> 20 МБ", "> 20 MB")
         }
     }
 

@@ -833,9 +833,9 @@ final class QyvroDiskAnalyzerController: NSWindowController, NSTableViewDataSour
 
         var title: String {
             switch self {
-            case .folders: return "Папки"
-            case .largestFiles: return "Тяжёлые файлы"
-            case .duplicates: return "Дубликаты (SHA-256)"
+            case .folders: return L("Папки", "Folders")
+            case .largestFiles: return L("Тяжёлые файлы", "Largest Files")
+            case .duplicates: return L("Дубликаты (SHA-256)", "Duplicates (SHA-256)")
             }
         }
     }
@@ -888,7 +888,7 @@ final class QyvroDiskAnalyzerController: NSWindowController, NSTableViewDataSour
             backing: .buffered,
             defer: false
         )
-        panel.title = "Где пропало место?"
+        panel.title = L("Где пропало место?", "Disk Analyzer & Duplicates")
         panel.titlebarAppearsTransparent = true
         panel.titleVisibility = .hidden
         panel.isMovableByWindowBackground = true
