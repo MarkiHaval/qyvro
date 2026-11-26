@@ -147,6 +147,21 @@ final class QyvroPreviewImageCache {
     }
 }
 
+/// Круглая дымчатая капсула вокруг значка отметки без двойного срабатывания клика.
+private final class FPFlagPillView: FPLayerView {
+    var onClick: (() -> Void)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        onClick?()
+    }
+}
+
 /// Одна панель просмотра: кадр плюс наложенная поверх подпись и отметка.
 final class FPPreviewPane: NSView {
     private let previewContainer = NSView()
@@ -173,8 +188,15 @@ final class FPPreviewPane: NSView {
     private var previousURL: URL?
     private var nameText = ""
     private var detailText = ""
+    private let flagPill = FPFlagPillView(color: .clear, cornerRadius: 14)
     private let flagBadge = FPSelectedFlagBadge()
-    private let focusRing = FPLayerView(color: .clear, cornerRadius: 10)
+    private let paneBadge = FPLayerView(color: .clear, cornerRadius: 10)
+    private let paneBadgeIndexLabel = NSTextField(labelWithString: "")
+    private let paneBadgeLabel = NSTextField(labelWithString: "")
+    private let focusRing = FPLayerView(color: .clear, cornerRadius: 12)
+    private var paneOrderNumber = 1
+    private var flagTrackingArea: NSTrackingArea?
+    private var isFlagHovered = false
 
     private(set) var url: URL?
     var onToggleFlag: ((URL) -> Void)?
@@ -184,7 +206,17 @@ final class FPPreviewPane: NSView {
     var onGrabFrameRequested: (() -> Void)?
 
     var isFocused = false {
-        didSet { updateFocusRing() }
+        didSet {
+            updateFocusRing()
+            refreshPaneBadge()
+        }
+    }
+
+    var isMultiPane = false {
+        didSet {
+            applyTheme()
+            refreshPaneBadge()
+        }
     }
 
     override init(frame frameRect: NSRect) {
@@ -202,8 +234,15 @@ final class FPPreviewPane: NSView {
 
         previewContainer.translatesAutoresizingMaskIntoConstraints = false
         previewContainer.wantsLayer = true
-        previewContainer.layer?.cornerRadius = FPStyle.isCyberEditorial ? 4 : 8
+        previewContainer.layer?.cornerRadius = FPStyle.isCyberEditorial ? 4 : 11
         previewContainer.layer?.masksToBounds = true
+
+        flagPill.translatesAutoresizingMaskIntoConstraints = false
+        flagPill.layer?.borderWidth = 0.75
+        flagPill.onClick = { [weak self] in
+            guard let self, let url = self.url else { return }
+            self.onToggleFlag?(url)
+        }
 
         flagBadge.translatesAutoresizingMaskIntoConstraints = false
         flagBadge.onToggle = { [weak self] in
@@ -211,9 +250,24 @@ final class FPPreviewPane: NSView {
             self.onToggleFlag?(url)
         }
 
+        paneBadge.translatesAutoresizingMaskIntoConstraints = false
+        paneBadge.layer?.borderWidth = 0.6
+        paneBadge.isHidden = true
+        paneBadgeIndexLabel.translatesAutoresizingMaskIntoConstraints = false
+        paneBadgeIndexLabel.font = FPStyle.monoMetaFont(ofSize: 10, weight: .bold)
+        paneBadgeIndexLabel.setContentHuggingPriority(.required, for: .horizontal)
+        paneBadgeIndexLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        paneBadgeLabel.translatesAutoresizingMaskIntoConstraints = false
+        paneBadgeLabel.lineBreakMode = .byTruncatingMiddle
+        paneBadgeLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        paneBadge.addSubview(paneBadgeIndexLabel)
+        paneBadge.addSubview(paneBadgeLabel)
+
         addSubview(focusRing)
         addSubview(previewContainer)
-        addSubview(flagBadge)
+        addSubview(paneBadge)
+        addSubview(flagPill)
+        flagPill.addSubview(flagBadge)
         applyTheme()
 
         NSLayoutConstraint.activate([
@@ -227,11 +281,62 @@ final class FPPreviewPane: NSView {
             focusRing.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: 2),
             focusRing.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: 2),
 
-            flagBadge.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -12),
-            flagBadge.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 12),
-            flagBadge.widthAnchor.constraint(equalToConstant: 24),
-            flagBadge.heightAnchor.constraint(equalToConstant: 24)
+            paneBadge.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: 12),
+            paneBadge.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 12),
+            paneBadge.heightAnchor.constraint(equalToConstant: 22),
+            paneBadge.trailingAnchor.constraint(lessThanOrEqualTo: flagPill.leadingAnchor, constant: -10),
+
+            paneBadgeIndexLabel.leadingAnchor.constraint(equalTo: paneBadge.leadingAnchor, constant: 9),
+            paneBadgeIndexLabel.centerYAnchor.constraint(equalTo: paneBadge.centerYAnchor),
+
+            paneBadgeLabel.leadingAnchor.constraint(equalTo: paneBadgeIndexLabel.trailingAnchor, constant: 6),
+            paneBadgeLabel.trailingAnchor.constraint(equalTo: paneBadge.trailingAnchor, constant: -9),
+            paneBadgeLabel.centerYAnchor.constraint(equalTo: paneBadge.centerYAnchor),
+
+            flagPill.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -12),
+            flagPill.topAnchor.constraint(equalTo: previewContainer.topAnchor, constant: 12),
+            flagPill.widthAnchor.constraint(equalToConstant: 28),
+            flagPill.heightAnchor.constraint(equalToConstant: 28),
+
+            flagBadge.centerXAnchor.constraint(equalTo: flagPill.centerXAnchor),
+            flagBadge.centerYAnchor.constraint(equalTo: flagPill.centerYAnchor),
+            flagBadge.widthAnchor.constraint(equalToConstant: 20),
+            flagBadge.heightAnchor.constraint(equalToConstant: 20)
         ])
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let flagTrackingArea { removeTrackingArea(flagTrackingArea) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .mouseMoved, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        flagTrackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        let pt = convert(event.locationInWindow, from: nil)
+        let hovered = flagPill.frame.insetBy(dx: -8, dy: -8).contains(pt)
+        if hovered != isFlagHovered {
+            isFlagHovered = hovered
+            refreshFlagPillAppearance()
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        if isFlagHovered {
+            isFlagHovered = false
+            refreshFlagPillAppearance()
+        }
+    }
+
+    func setPaneNumber(_ number: Int, multiPane: Bool) {
+        paneOrderNumber = number
+        isMultiPane = multiPane
     }
 
     /// Имя и метрики файла для верхней панели окна.
@@ -239,17 +344,81 @@ final class FPPreviewPane: NSView {
         (nameText, detailText)
     }
 
-    /// Кадр остаётся полностью непрозрачным: прозрачность относится к фону
-    /// окна, а не к самой картинке — сквозь неё просвечивал рабочий стол.
+    /// Кадр остаётся полностью непрозрачным на чистом студийном тёмном фоне:
+    /// нейтральный обсидиан не искажает цветокоррекцию и не пропускает текст
+    /// проводника сквозь поля 21:9.
     func applyTheme() {
-        previewContainer.layer?.backgroundColor = NSColor.black
-            .withAlphaComponent(0.22).cgColor
+        let aurora = FPStyle.isObsidianAurora
+        let tint = FPStyle.text.blended(withFraction: 0.22, of: FPStyle.accent) ?? FPStyle.text
+        previewContainer.layer?.cornerRadius = FPStyle.isCyberEditorial ? 4 : 11
+        if isMultiPane {
+            previewContainer.layer?.backgroundColor = NSColor(
+                calibratedRed: 0.025,
+                green: 0.024,
+                blue: 0.032,
+                alpha: 0.72
+            ).cgColor
+            previewContainer.layer?.borderWidth = 0.65
+            previewContainer.layer?.borderColor = (aurora ? tint.withAlphaComponent(0.10) : FPStyle.stroke.withAlphaComponent(0.35)).cgColor
+        } else {
+            previewContainer.layer?.backgroundColor = NSColor.clear.cgColor
+            previewContainer.layer?.borderWidth = 0
+            previewContainer.layer?.borderColor = NSColor.clear.cgColor
+        }
+        paneBadge.layer?.backgroundColor = NSColor(calibratedRed: 0.055, green: 0.052, blue: 0.068, alpha: 0.80).cgColor
+        paneBadge.layer?.borderColor = (aurora ? tint.withAlphaComponent(0.14) : FPStyle.stroke.withAlphaComponent(0.45)).cgColor
+        refreshPaneBadge()
+        refreshFlagPillAppearance()
+        transportBar?.applyTheme()
         updateFocusRing()
+    }
+
+    private func refreshPaneBadge() {
+        paneBadge.isHidden = !isMultiPane || nameText.isEmpty
+        guard !paneBadge.isHidden else { return }
+        paneBadgeIndexLabel.stringValue = "\(paneOrderNumber)"
+        paneBadgeIndexLabel.textColor = isFocused ? FPStyle.orange : FPStyle.dimText
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingMiddle
+        paneBadgeLabel.attributedStringValue = NSAttributedString(
+            string: nameText,
+            attributes: [
+                .font: FPStyle.bodyFont(ofSize: 10.5, weight: .medium),
+                .foregroundColor: FPStyle.text.withAlphaComponent(isFocused ? 0.94 : 0.72),
+                .paragraphStyle: paragraph
+            ]
+        )
+    }
+
+    private func refreshFlagPillAppearance() {
+        let level = flagBadge.level
+        switch level {
+        case .none:
+            flagPill.layer?.backgroundColor = NSColor(
+                calibratedRed: 0.055,
+                green: 0.052,
+                blue: 0.068,
+                alpha: isFlagHovered ? 0.82 : 0.56
+            ).cgColor
+            flagPill.layer?.borderColor = NSColor.white.withAlphaComponent(isFlagHovered ? 0.24 : 0.12).cgColor
+            flagPill.layer?.borderWidth = 0.75
+            flagPill.alphaValue = isFlagHovered ? 1.0 : 0.74
+        case .candidate:
+            flagPill.layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.05, blue: 0.07, alpha: 0.86).cgColor
+            flagPill.layer?.borderColor = FPStyle.orange.withAlphaComponent(0.68).cgColor
+            flagPill.layer?.borderWidth = 1.0
+            flagPill.alphaValue = 1.0
+        case .confirmed:
+            flagPill.layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.05, blue: 0.07, alpha: 0.86).cgColor
+            flagPill.layer?.borderColor = FPStyle.accent.withAlphaComponent(0.75).cgColor
+            flagPill.layer?.borderWidth = 1.0
+            flagPill.alphaValue = 1.0
+        }
     }
 
     private func updateFocusRing() {
         focusRing.layer?.borderColor = isFocused
-            ? FPStyle.accent.withAlphaComponent(0.85).cgColor
+            ? FPStyle.accent.withAlphaComponent(0.88).cgColor
             : NSColor.clear.cgColor
     }
 
@@ -302,14 +471,15 @@ final class FPPreviewPane: NSView {
         guard let url else {
             nameText = ""
             detailText = ""
-            flagBadge.isHidden = true
+            flagPill.isHidden = true
+            paneBadge.isHidden = true
             return
         }
 
         if FPMediaInfoCache.movieExtensions.contains(ext) || Self.audioExtensions.contains(ext) {
             // Видео и аудио идут мимо Quick Look и мимо AVPlayerView — см.
             // комментарий у playerLayerView. Строка управления — отдельная
-            // полоса под кадром, а не поверх него.
+            // парящая стеклянная капсула под кадром, а не поверх него.
             let layerView = FPPlayerLayerView(frame: previewContainer.bounds)
             layerView.translatesAutoresizingMaskIntoConstraints = false
             let bar = FPMediaTransportBar(frame: .zero)
@@ -322,22 +492,24 @@ final class FPPreviewPane: NSView {
                 layerView.topAnchor.constraint(equalTo: previewContainer.topAnchor),
                 layerView.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
                 layerView.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
-                layerView.bottomAnchor.constraint(equalTo: bar.topAnchor),
+                layerView.bottomAnchor.constraint(equalTo: bar.topAnchor, constant: -8),
 
-                bar.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor),
-                bar.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor),
-                bar.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor),
-                bar.heightAnchor.constraint(equalToConstant: 40)
+                bar.leadingAnchor.constraint(equalTo: previewContainer.leadingAnchor, constant: 12),
+                bar.trailingAnchor.constraint(equalTo: previewContainer.trailingAnchor, constant: -12),
+                bar.bottomAnchor.constraint(equalTo: previewContainer.bottomAnchor, constant: -10),
+                bar.heightAnchor.constraint(equalToConstant: 42)
             ])
             playerLayerView = layerView
             transportBar = bar
             bar.onGrabFrame = { [weak self] in self?.onGrabFrameRequested?() }
             bar.setShowsGrabFrame(FPMediaInfoCache.movieExtensions.contains(ext))
+            bar.applyTheme()
             bar.attach(to: avPlayer)
             // Открыл превью — значит хочет посмотреть/послушать, а не сперва
             // прицелиться в кнопку play.
             avPlayer.play()
             nameText = url.lastPathComponent
+            refreshPaneBadge()
             refreshFlag()
             refreshDetail(for: url)
             return
@@ -348,6 +520,7 @@ final class FPPreviewPane: NSView {
             targetImageView.animates = false
             targetImageView.image = FPFontPreviewRenderer.specimenImage(for: url)
             nameText = url.lastPathComponent
+            refreshPaneBadge()
             refreshFlag()
             refreshDetail(for: url)
             return
@@ -378,6 +551,7 @@ final class FPPreviewPane: NSView {
                 }
             }
             nameText = url.lastPathComponent
+            refreshPaneBadge()
             refreshFlag()
             refreshDetail(for: url)
             return
@@ -385,6 +559,7 @@ final class FPPreviewPane: NSView {
 
         showWithQuickLook(url: url)
         nameText = url.lastPathComponent
+        refreshPaneBadge()
         refreshFlag()
         refreshDetail(for: url)
     }
@@ -432,8 +607,10 @@ final class FPPreviewPane: NSView {
 
     func refreshFlag() {
         guard let url else { return }
+        flagPill.isHidden = false
         flagBadge.isHidden = false
         flagBadge.level = FPFinderTagStore.flagLevel(url: url)
+        refreshFlagPillAppearance()
     }
 
     private func refreshDetail(for url: URL) {
@@ -481,6 +658,11 @@ final class FPPreviewPane: NSView {
     var isShowingVideo: Bool {
         guard let url, playerLayerView?.player != nil else { return false }
         return FPMediaInfoCache.movieExtensions.contains(url.pathExtension.lowercased())
+    }
+
+    var isShowingAudio: Bool {
+        guard let url, playerLayerView?.player != nil else { return false }
+        return Self.audioExtensions.contains(url.pathExtension.lowercased())
     }
 
     func captureCurrentVideoFrame(completion: @escaping (Result<URL, Error>) -> Void) {
@@ -612,17 +794,23 @@ final class FPPlayerLayerView: NSView {
 /// выключить не нашлось. Здесь чужого UI нет вообще, поэтому и тушить
 /// нечему.
 final class FPMediaTransportBar: NSView {
+    private let background = FPLayerView(color: .clear, cornerRadius: 12)
+    private let playPill = FPLayerView(color: .clear, cornerRadius: 14)
     private let playPauseButton = NSButton()
     private let currentTimeLabel = NSTextField(labelWithString: "00:00")
     private let durationLabel = NSTextField(labelWithString: "00:00")
     private let scrubber = NSSlider(value: 0, minValue: 0, maxValue: 1, target: nil, action: nil)
+    private let grabPill = FPLayerView(color: .clear, cornerRadius: 8)
     private let grabFrameButton = NSButton()
+    private var grabPillWidth: NSLayoutConstraint?
     private let muteButton = NSButton()
     private let volumeSlider = NSSlider(value: 1, minValue: 0, maxValue: 1, target: nil, action: nil)
 
     private weak var player: AVPlayer?
     private var timeObserver: Any?
     var onGrabFrame: (() -> Void)?
+
+    override var mouseDownCanMoveWindow: Bool { false }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -633,39 +821,38 @@ final class FPMediaTransportBar: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private func buildLayout() {
-        let background = FPLayerView(color: FPStyle.control)
         background.translatesAutoresizingMaskIntoConstraints = false
+        background.layer?.borderWidth = 0.75
+
+        playPill.translatesAutoresizingMaskIntoConstraints = false
+        playPill.layer?.borderWidth = 0.6
 
         playPauseButton.isBordered = false
         playPauseButton.bezelStyle = .inline
         playPauseButton.imagePosition = .imageOnly
-        playPauseButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: "Воспроизвести")
-        playPauseButton.contentTintColor = FPStyle.text
+        playPauseButton.image = NSImage(systemSymbolName: "play.fill", accessibilityDescription: L("Воспроизвести", "Play"))
         playPauseButton.target = self
         playPauseButton.action = #selector(togglePlayPause)
         playPauseButton.translatesAutoresizingMaskIntoConstraints = false
 
         for label in [currentTimeLabel, durationLabel] {
-            label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-            label.textColor = FPStyle.dimText
+            label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
             label.alignment = .center
             label.translatesAutoresizingMaskIntoConstraints = false
         }
 
         scrubber.isContinuous = true
-        if #available(macOS 10.12.2, *) {
-            scrubber.trackFillColor = FPStyle.accent
-        }
         scrubber.target = self
         scrubber.action = #selector(scrub)
         scrubber.translatesAutoresizingMaskIntoConstraints = false
+
+        grabPill.translatesAutoresizingMaskIntoConstraints = false
+        grabPill.layer?.borderWidth = 0.6
 
         grabFrameButton.isBordered = false
         grabFrameButton.bezelStyle = .inline
         grabFrameButton.imagePosition = .imageOnly
         grabFrameButton.image = NSImage(systemSymbolName: "camera.fill", accessibilityDescription: L("Снять кадр в PNG", "Grab PNG frame"))
-        grabFrameButton.contentTintColor = FPStyle.orange
-        grabFrameButton.toolTip = L("Снять кадр в PNG (E)", "Grab PNG frame (E)")
         grabFrameButton.target = self
         grabFrameButton.action = #selector(grabFramePressed)
         grabFrameButton.translatesAutoresizingMaskIntoConstraints = false
@@ -674,27 +861,28 @@ final class FPMediaTransportBar: NSView {
         muteButton.bezelStyle = .inline
         muteButton.imagePosition = .imageOnly
         muteButton.image = NSImage(systemSymbolName: "speaker.wave.2.fill", accessibilityDescription: L("Звук", "Sound"))
-        muteButton.contentTintColor = FPStyle.text
         muteButton.target = self
         muteButton.action = #selector(toggleMute)
         muteButton.translatesAutoresizingMaskIntoConstraints = false
 
         volumeSlider.isContinuous = true
-        if #available(macOS 10.12.2, *) {
-            volumeSlider.trackFillColor = FPStyle.accent
-        }
         volumeSlider.target = self
         volumeSlider.action = #selector(volumeChanged)
         volumeSlider.translatesAutoresizingMaskIntoConstraints = false
 
         addSubview(background)
-        addSubview(playPauseButton)
+        addSubview(playPill)
+        playPill.addSubview(playPauseButton)
         addSubview(currentTimeLabel)
         addSubview(scrubber)
         addSubview(durationLabel)
-        addSubview(grabFrameButton)
+        addSubview(grabPill)
+        grabPill.addSubview(grabFrameButton)
         addSubview(muteButton)
         addSubview(volumeSlider)
+
+        let widthConstraint = grabPill.widthAnchor.constraint(equalToConstant: 28)
+        grabPillWidth = widthConstraint
 
         NSLayoutConstraint.activate([
             background.topAnchor.constraint(equalTo: topAnchor),
@@ -702,27 +890,37 @@ final class FPMediaTransportBar: NSView {
             background.trailingAnchor.constraint(equalTo: trailingAnchor),
             background.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            playPauseButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
-            playPauseButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            playPauseButton.widthAnchor.constraint(equalToConstant: 26),
-            playPauseButton.heightAnchor.constraint(equalToConstant: 26),
+            playPill.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            playPill.centerYAnchor.constraint(equalTo: centerYAnchor),
+            playPill.widthAnchor.constraint(equalToConstant: 28),
+            playPill.heightAnchor.constraint(equalToConstant: 28),
 
-            currentTimeLabel.leadingAnchor.constraint(equalTo: playPauseButton.trailingAnchor, constant: 10),
+            playPauseButton.centerXAnchor.constraint(equalTo: playPill.centerXAnchor),
+            playPauseButton.centerYAnchor.constraint(equalTo: playPill.centerYAnchor),
+            playPauseButton.widthAnchor.constraint(equalToConstant: 22),
+            playPauseButton.heightAnchor.constraint(equalToConstant: 22),
+
+            currentTimeLabel.leadingAnchor.constraint(equalTo: playPill.trailingAnchor, constant: 8),
             currentTimeLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            currentTimeLabel.widthAnchor.constraint(equalToConstant: 40),
+            currentTimeLabel.widthAnchor.constraint(equalToConstant: 42),
 
             scrubber.leadingAnchor.constraint(equalTo: currentTimeLabel.trailingAnchor, constant: 8),
             scrubber.trailingAnchor.constraint(equalTo: durationLabel.leadingAnchor, constant: -8),
             scrubber.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            durationLabel.trailingAnchor.constraint(equalTo: grabFrameButton.leadingAnchor, constant: -10),
+            durationLabel.trailingAnchor.constraint(equalTo: grabPill.leadingAnchor, constant: -10),
             durationLabel.centerYAnchor.constraint(equalTo: centerYAnchor),
-            durationLabel.widthAnchor.constraint(equalToConstant: 40),
+            durationLabel.widthAnchor.constraint(equalToConstant: 42),
 
-            grabFrameButton.trailingAnchor.constraint(equalTo: muteButton.leadingAnchor, constant: -8),
-            grabFrameButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            grabFrameButton.widthAnchor.constraint(equalToConstant: 20),
-            grabFrameButton.heightAnchor.constraint(equalToConstant: 20),
+            grabPill.trailingAnchor.constraint(equalTo: muteButton.leadingAnchor, constant: -10),
+            grabPill.centerYAnchor.constraint(equalTo: centerYAnchor),
+            widthConstraint,
+            grabPill.heightAnchor.constraint(equalToConstant: 26),
+
+            grabFrameButton.centerXAnchor.constraint(equalTo: grabPill.centerXAnchor),
+            grabFrameButton.centerYAnchor.constraint(equalTo: grabPill.centerYAnchor),
+            grabFrameButton.widthAnchor.constraint(equalToConstant: 22),
+            grabFrameButton.heightAnchor.constraint(equalToConstant: 22),
 
             muteButton.trailingAnchor.constraint(equalTo: volumeSlider.leadingAnchor, constant: -6),
             muteButton.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -733,10 +931,42 @@ final class FPMediaTransportBar: NSView {
             volumeSlider.centerYAnchor.constraint(equalTo: centerYAnchor),
             volumeSlider.widthAnchor.constraint(equalToConstant: 64)
         ])
+        applyTheme()
+    }
+
+    func applyTheme() {
+        let aurora = FPStyle.isObsidianAurora
+        let tint = FPStyle.text.blended(withFraction: 0.22, of: FPStyle.accent) ?? FPStyle.text
+        background.layer?.backgroundColor = (aurora
+            ? NSColor(calibratedRed: 0.068, green: 0.064, blue: 0.082, alpha: 0.90)
+            : FPStyle.control.withAlphaComponent(0.92)).cgColor
+        background.layer?.borderColor = (aurora
+            ? tint.withAlphaComponent(0.14)
+            : FPStyle.stroke.withAlphaComponent(0.55)).cgColor
+
+        playPill.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.08).cgColor
+        playPill.layer?.borderColor = tint.withAlphaComponent(0.14).cgColor
+        playPauseButton.contentTintColor = FPStyle.text
+
+        currentTimeLabel.textColor = FPStyle.text.withAlphaComponent(0.84)
+        durationLabel.textColor = FPStyle.dimText
+
+        if #available(macOS 10.12.2, *) {
+            scrubber.trackFillColor = FPStyle.accent
+            volumeSlider.trackFillColor = FPStyle.accent
+        }
+
+        grabPill.layer?.backgroundColor = FPStyle.orange.withAlphaComponent(0.14).cgColor
+        grabPill.layer?.borderColor = FPStyle.orange.withAlphaComponent(0.36).cgColor
+        grabFrameButton.contentTintColor = FPStyle.orange
+        grabFrameButton.toolTip = L("Снять кадр в PNG (E)", "Grab PNG frame (E)")
+        muteButton.contentTintColor = FPStyle.text.withAlphaComponent(0.86)
+        muteButton.toolTip = L("Звук (M)", "Mute / Unmute (M)")
     }
 
     func setShowsGrabFrame(_ shows: Bool) {
-        grabFrameButton.isHidden = !shows
+        grabPill.isHidden = !shows
+        grabPillWidth?.constant = shows ? 28 : 0
     }
 
     @objc private func grabFramePressed() {
@@ -843,22 +1073,140 @@ final class FPMediaTransportBar: NSView {
     }
 }
 
-/// Содержимое окна: одна, две или три панели рядом.
+/// Компактная стеклянная кнопка-иконка для шапки просмотрщика в стиле Studio V4.
+private final class FPPreviewHeaderButton: NSButton {
+    private var trackingAreaRef: NSTrackingArea?
+    private var isHovered = false
+    var isActiveState = false {
+        didSet { applyAppearance() }
+    }
+
+    override var mouseDownCanMoveWindow: Bool { false }
+
+    init(symbol: String, accessibility: String, target: AnyObject?, action: Selector?) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        isBordered = false
+        bezelStyle = .inline
+        imagePosition = .imageOnly
+        setButtonType(.momentaryChange)
+        layer?.cornerRadius = 7
+        layer?.borderWidth = 0.65
+        translatesAutoresizingMaskIntoConstraints = false
+        self.target = target
+        self.action = action
+        setSymbol(symbol, accessibility: accessibility)
+        applyAppearance()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    func setSymbol(_ symbol: String, accessibility: String) {
+        if #available(macOS 11.0, *) {
+            let config = NSImage.SymbolConfiguration(pointSize: 11.5, weight: .medium)
+            let resolved = NSImage(systemSymbolName: symbol, accessibilityDescription: accessibility)
+                ?? NSImage(systemSymbolName: "rectangle.lefthalf.filled", accessibilityDescription: accessibility)
+            image = resolved?.withSymbolConfiguration(config)
+        }
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingAreaRef { removeTrackingArea(trackingAreaRef) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingAreaRef = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        applyAppearance()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        applyAppearance()
+    }
+
+    func applyAppearance() {
+        let tint = FPStyle.text.blended(withFraction: 0.22, of: FPStyle.accent) ?? FPStyle.text
+        if isActiveState {
+            layer?.backgroundColor = FPStyle.accent.withAlphaComponent(isHovered ? 0.28 : 0.20).cgColor
+            layer?.borderColor = FPStyle.accent.withAlphaComponent(0.55).cgColor
+            contentTintColor = FPStyle.orange
+        } else if isHovered {
+            layer?.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+            layer?.borderColor = tint.withAlphaComponent(0.18).cgColor
+            contentTintColor = FPStyle.text
+        } else {
+            layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
+            layer?.borderColor = tint.withAlphaComponent(0.10).cgColor
+            contentTintColor = FPStyle.dimText
+        }
+    }
+}
+
+/// Содержимое окна просмотрщика: Studio V4 Darkroom Lightbox.
 final class FPPreviewContentView: NSView {
-    /// Подложка и градиент вынесены отдельными видами, а прозрачность
-    /// применяется к ним. Раньше она стояла на всём окне, и вместе с фоном
-    /// просвечивала сама картинка.
+    enum HintMode {
+        case image
+        case video
+        case audio
+        case compare
+        case curtain
+    }
+
+    /// Подложка и фон вынесены отдельными видами: в темах «Аврора» рисуется
+    /// тот же бархатный обсидиан с Deep Glow и микрозерном, что в главном окне,
+    /// а кадр лежит внутри парящего нейтрального тёмного острова без паразитного
+    /// оттенка и без просвечивания текста проводника.
     private let backdrop = NSVisualEffectView()
     private let backgroundGradientView = FPBackgroundGradientView()
-    private let topBar = NSVisualEffectView()
+    private let auroraBackdropView = QyvroAuroraBackdropView()
+    private let topBar = NSView()
+    private let leftHeaderStack = NSStackView()
+    private let rightHeaderStack = NSStackView()
+    private let indexPill = FPLayerView(color: .clear, cornerRadius: 7)
+    private let indexLabel = NSTextField(labelWithString: "")
     private let nameButton = NSButton()
-    private let detailField = NSTextField(labelWithString: "")
+    private let statusPill = FPLayerView(color: .clear, cornerRadius: 7)
     private let copyHint = NSTextField(labelWithString: "")
+    private let detailPill = FPLayerView(color: .clear, cornerRadius: 7)
+    private let detailField = NSTextField(labelWithString: "")
+    private lazy var compareButton = FPPreviewHeaderButton(
+        symbol: "rectangle.split.2x1",
+        accessibility: L("Сравнение панелей", "Compare panes"),
+        target: self,
+        action: #selector(comparePressed)
+    )
+    private lazy var curtainButton = FPPreviewHeaderButton(
+        symbol: "arrow.left.and.right.righttriangle.left.righttriangle.right",
+        accessibility: L("Сравнение шторкой", "Split wipe compare"),
+        target: self,
+        action: #selector(curtainPressed)
+    )
+    private lazy var maximizeButton = FPPreviewHeaderButton(
+        symbol: "arrow.up.left.and.arrow.down.right",
+        accessibility: L("Во весь экран", "Maximize"),
+        target: self,
+        action: #selector(maximizePressed)
+    )
+    private let stageIsland = FPLayerView(color: .clear, cornerRadius: 16)
     private let stack = NSStackView()
+    private let hintPill = FPLayerView(color: .clear, cornerRadius: 13)
     private let hintBar = NSTextField(labelWithString: "")
     private var resizeOverlay: QyvroWindowResizeOverlay?
+    private var currentHintMode: HintMode = .image
     private(set) var panes: [FPPreviewPane] = []
     var onKeyDown: ((NSEvent) -> Bool)?
+    var onCycleCompare: (() -> Void)?
+    var onToggleCurtain: (() -> Void)?
+    var onToggleMaximize: (() -> Void)?
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -871,96 +1219,181 @@ final class FPPreviewContentView: NSView {
         backdrop.state = .active
         backdrop.translatesAutoresizingMaskIntoConstraints = false
         backgroundGradientView.translatesAutoresizingMaskIntoConstraints = false
+        auroraBackdropView.translatesAutoresizingMaskIntoConstraints = false
 
-        // Верхняя панель повторяет панель проводника: то же стекло, та же
-        // обводка и радиус. Кадр начинается сразу под ней, без зазора.
-        topBar.material = .hudWindow
-        topBar.blendingMode = .withinWindow
-        topBar.state = .active
-        topBar.wantsLayer = true
-        topBar.layer?.cornerRadius = FPStyle.isCyberEditorial ? 5 : 9
-        topBar.layer?.borderWidth = 1
         topBar.translatesAutoresizingMaskIntoConstraints = false
+
+        leftHeaderStack.orientation = .horizontal
+        leftHeaderStack.alignment = .centerY
+        leftHeaderStack.spacing = 8
+        leftHeaderStack.detachesHiddenViews = true
+        leftHeaderStack.translatesAutoresizingMaskIntoConstraints = false
+
+        rightHeaderStack.orientation = .horizontal
+        rightHeaderStack.alignment = .centerY
+        rightHeaderStack.spacing = 6
+        rightHeaderStack.detachesHiddenViews = true
+        rightHeaderStack.translatesAutoresizingMaskIntoConstraints = false
+        rightHeaderStack.setContentHuggingPriority(.required, for: .horizontal)
+        rightHeaderStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        indexPill.translatesAutoresizingMaskIntoConstraints = false
+        indexPill.layer?.borderWidth = 0.6
+        indexPill.isHidden = true
+        indexPill.setContentHuggingPriority(.required, for: .horizontal)
+        indexPill.setContentCompressionResistancePriority(.required, for: .horizontal)
+        indexLabel.font = FPStyle.monoMetaFont(ofSize: 10.5, weight: .semibold)
+        indexLabel.alignment = .center
+        indexLabel.translatesAutoresizingMaskIntoConstraints = false
+        indexPill.addSubview(indexLabel)
 
         nameButton.isBordered = false
         nameButton.bezelStyle = .inline
         nameButton.alignment = .left
         nameButton.target = self
         nameButton.action = #selector(copyName(_:))
-        nameButton.toolTip = "Нажмите, чтобы скопировать имя файла"
+        nameButton.toolTip = L("Нажмите, чтобы скопировать имя файла", "Click to copy file name")
         nameButton.translatesAutoresizingMaskIntoConstraints = false
         nameButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        nameButton.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        detailField.alignment = .right
-        detailField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
-        detailField.translatesAutoresizingMaskIntoConstraints = false
-        detailField.setContentHuggingPriority(.required, for: .horizontal)
-
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.layer?.borderWidth = 0.65
+        statusPill.isHidden = true
+        statusPill.setContentHuggingPriority(.required, for: .horizontal)
+        statusPill.setContentCompressionResistancePriority(.required, for: .horizontal)
         copyHint.alignment = .center
-        copyHint.font = FPStyle.headingFont(ofSize: 9.5, weight: .semibold)
+        copyHint.font = FPStyle.monoMetaFont(ofSize: 10, weight: .semibold)
         copyHint.stringValue = ""
         copyHint.translatesAutoresizingMaskIntoConstraints = false
-        copyHint.setContentHuggingPriority(.required, for: .horizontal)
+        statusPill.addSubview(copyHint)
+
+        detailPill.translatesAutoresizingMaskIntoConstraints = false
+        detailPill.layer?.borderWidth = 0.6
+        detailPill.isHidden = true
+        detailPill.setContentHuggingPriority(.required, for: .horizontal)
+        detailPill.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
+        detailField.alignment = .right
+        detailField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        detailField.lineBreakMode = .byTruncatingTail
+        detailField.translatesAutoresizingMaskIntoConstraints = false
+        detailPill.addSubview(detailField)
+
+        stageIsland.translatesAutoresizingMaskIntoConstraints = false
+        stageIsland.layer?.masksToBounds = true
+        stageIsland.layer?.borderWidth = 0.75
 
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.orientation = .horizontal
         stack.distribution = .fillEqually
-        stack.spacing = 10
+        stack.spacing = 8
+
+        hintPill.translatesAutoresizingMaskIntoConstraints = false
+        hintPill.layer?.borderWidth = 0.65
 
         hintBar.translatesAutoresizingMaskIntoConstraints = false
         hintBar.alignment = .center
-        hintBar.attributedStringValue = Self.hintText()
+        hintBar.lineBreakMode = .byTruncatingTail
+        hintBar.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        hintBar.attributedStringValue = Self.hintText(for: currentHintMode)
 
         addSubview(backdrop)
         addSubview(backgroundGradientView)
+        addSubview(auroraBackdropView)
         addSubview(topBar)
-        topBar.addSubview(nameButton)
-        topBar.addSubview(copyHint)
-        topBar.addSubview(detailField)
-        addSubview(stack)
-        addSubview(hintBar)
+        topBar.addSubview(leftHeaderStack)
+        topBar.addSubview(rightHeaderStack)
+
+        leftHeaderStack.addArrangedSubview(indexPill)
+        leftHeaderStack.addArrangedSubview(nameButton)
+        leftHeaderStack.addArrangedSubview(statusPill)
+
+        rightHeaderStack.addArrangedSubview(detailPill)
+        rightHeaderStack.addArrangedSubview(compareButton)
+        rightHeaderStack.addArrangedSubview(curtainButton)
+        rightHeaderStack.addArrangedSubview(maximizeButton)
+
+        addSubview(stageIsland)
+        stageIsland.addSubview(stack)
+        addSubview(hintPill)
+        hintPill.addSubview(hintBar)
 
         NSLayoutConstraint.activate([
             backdrop.topAnchor.constraint(equalTo: topAnchor),
             backdrop.leadingAnchor.constraint(equalTo: leadingAnchor),
             backdrop.trailingAnchor.constraint(equalTo: trailingAnchor),
             backdrop.bottomAnchor.constraint(equalTo: bottomAnchor),
+
             backgroundGradientView.topAnchor.constraint(equalTo: topAnchor),
             backgroundGradientView.leadingAnchor.constraint(equalTo: leadingAnchor),
             backgroundGradientView.trailingAnchor.constraint(equalTo: trailingAnchor),
             backgroundGradientView.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // Отступ слева освобождает место под кнопки светофора: панель
-            // стоит с ними в одном ряду, поэтому пустой полосы сверху нет.
-            topBar.topAnchor.constraint(equalTo: topAnchor, constant: 6),
+            auroraBackdropView.topAnchor.constraint(equalTo: topAnchor),
+            auroraBackdropView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            auroraBackdropView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            auroraBackdropView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            // Бесшовная верхняя полоса Studio V4 в одном ряду со светофором.
+            topBar.topAnchor.constraint(equalTo: topAnchor, constant: 4),
             topBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 78),
-            topBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            topBar.heightAnchor.constraint(equalToConstant: 28),
+            topBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            topBar.heightAnchor.constraint(equalToConstant: 34),
 
-            nameButton.leadingAnchor.constraint(equalTo: topBar.leadingAnchor, constant: 10),
-            nameButton.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            copyHint.leadingAnchor.constraint(equalTo: nameButton.trailingAnchor, constant: 6),
-            copyHint.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
-            detailField.leadingAnchor.constraint(
-                greaterThanOrEqualTo: copyHint.trailingAnchor,
-                constant: 10
-            ),
-            detailField.trailingAnchor.constraint(equalTo: topBar.trailingAnchor, constant: -10),
-            detailField.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            leftHeaderStack.leadingAnchor.constraint(equalTo: topBar.leadingAnchor),
+            leftHeaderStack.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
+            leftHeaderStack.trailingAnchor.constraint(lessThanOrEqualTo: rightHeaderStack.leadingAnchor, constant: -12),
 
-            stack.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 6),
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            stack.bottomAnchor.constraint(equalTo: hintBar.topAnchor, constant: -6),
+            rightHeaderStack.trailingAnchor.constraint(equalTo: topBar.trailingAnchor),
+            rightHeaderStack.centerYAnchor.constraint(equalTo: topBar.centerYAnchor),
 
-            hintBar.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
-            hintBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            hintBar.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
-            hintBar.heightAnchor.constraint(equalToConstant: 17)
+            indexPill.heightAnchor.constraint(equalToConstant: 22),
+            indexLabel.leadingAnchor.constraint(equalTo: indexPill.leadingAnchor, constant: 8),
+            indexLabel.trailingAnchor.constraint(equalTo: indexPill.trailingAnchor, constant: -8),
+            indexLabel.centerYAnchor.constraint(equalTo: indexPill.centerYAnchor),
+
+            statusPill.heightAnchor.constraint(equalToConstant: 22),
+            copyHint.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 8),
+            copyHint.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -8),
+            copyHint.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
+
+            detailPill.heightAnchor.constraint(equalToConstant: 22),
+            detailField.leadingAnchor.constraint(equalTo: detailPill.leadingAnchor, constant: 9),
+            detailField.trailingAnchor.constraint(equalTo: detailPill.trailingAnchor, constant: -9),
+            detailField.centerYAnchor.constraint(equalTo: detailPill.centerYAnchor),
+
+            compareButton.widthAnchor.constraint(equalToConstant: 26),
+            compareButton.heightAnchor.constraint(equalToConstant: 24),
+            curtainButton.widthAnchor.constraint(equalToConstant: 26),
+            curtainButton.heightAnchor.constraint(equalToConstant: 24),
+            maximizeButton.widthAnchor.constraint(equalToConstant: 26),
+            maximizeButton.heightAnchor.constraint(equalToConstant: 24),
+
+            // Парящий тёмный остров Studio V4 — та же геометрия (10 pt), что и в проводнике.
+            stageIsland.topAnchor.constraint(equalTo: topBar.bottomAnchor, constant: 4),
+            stageIsland.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            stageIsland.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            stageIsland.bottomAnchor.constraint(equalTo: hintPill.topAnchor, constant: -8),
+
+            stack.topAnchor.constraint(equalTo: stageIsland.topAnchor, constant: 6),
+            stack.leadingAnchor.constraint(equalTo: stageIsland.leadingAnchor, constant: 6),
+            stack.trailingAnchor.constraint(equalTo: stageIsland.trailingAnchor, constant: -6),
+            stack.bottomAnchor.constraint(equalTo: stageIsland.bottomAnchor, constant: -6),
+
+            // Центрированная плавающая стеклянная капсула подсказок снизу.
+            hintPill.centerXAnchor.constraint(equalTo: centerXAnchor),
+            hintPill.leadingAnchor.constraint(greaterThanOrEqualTo: leadingAnchor, constant: 14),
+            hintPill.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -14),
+            hintPill.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -9),
+            hintPill.heightAnchor.constraint(equalToConstant: 26),
+
+            hintBar.leadingAnchor.constraint(equalTo: hintPill.leadingAnchor, constant: 14),
+            hintBar.trailingAnchor.constraint(equalTo: hintPill.trailingAnchor, constant: -14),
+            hintBar.centerYAnchor.constraint(equalTo: hintPill.centerYAnchor)
         ])
         resizeOverlay = QyvroWindowResizeOverlay.install(
             in: self,
-            insets: QyvroWindowResizeInsets(left: 8, right: 8, top: 6, bottom: 8, cornerSize: 14)
+            insets: QyvroWindowResizeInsets(left: 10, right: 10, top: 6, bottom: 9, cornerSize: 14)
         )
         applyTheme()
     }
@@ -969,73 +1402,226 @@ final class FPPreviewContentView: NSView {
         resizeOverlay?.bringToFront()
     }
 
+    /// Монтирует шторку прямо внутрь тёмного острова просмотра с тем же отступом,
+    /// что и у панелей.
+    func mountCurtain(_ curtain: FPCurtainCompareView) {
+        if curtain.superview !== stageIsland {
+            curtain.removeFromSuperview()
+            curtain.translatesAutoresizingMaskIntoConstraints = false
+            stageIsland.addSubview(curtain)
+            NSLayoutConstraint.activate([
+                curtain.topAnchor.constraint(equalTo: stageIsland.topAnchor, constant: 6),
+                curtain.leadingAnchor.constraint(equalTo: stageIsland.leadingAnchor, constant: 6),
+                curtain.trailingAnchor.constraint(equalTo: stageIsland.trailingAnchor, constant: -6),
+                curtain.bottomAnchor.constraint(equalTo: stageIsland.bottomAnchor, constant: -6)
+            ])
+        }
+        keepResizeOverlayOnTop()
+    }
+
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    /// Строка подсказок: клавиша выделена цветом темы, действие набрано
-    /// капсом. Кегль подобран так, чтобы читалось с рабочего расстояния.
-    private static func hintText() -> NSAttributedString {
-        let pairs = [
-            ("← →", L("листать", "browse")),
-            ("S", L("пауза", "play")),
-            ("M", L("звук", "mute")),
-            ("E", L("кадр PNG", "grab PNG")),
-            ("F", L("отметить", "mark")),
-            ("⌫", L("в корзину", "trash")),
-            ("C", L("сравнение", "compare")),
-            ("V", L("шторка", "wipe")),
-            ("T", L("во весь экран", "fullscreen")),
-            ("Esc", L("закрыть", "close"))
-        ]
+    /// Компактная контекстная строка подсказок внутри стеклянной HUD-капсулы:
+    /// показывает только реально нужные клавиши для текущего типа файла и режима.
+    private static func hintText(for mode: HintMode) -> NSAttributedString {
+        let pairs: [(String, String)]
+        switch mode {
+        case .video:
+            pairs = [
+                ("← →", L("листать", "browse")),
+                ("S", L("пауза", "play")),
+                ("M", L("звук", "mute")),
+                ("E", L("кадр PNG", "PNG frame")),
+                ("F", L("отметить", "mark")),
+                ("T", L("экран", "zoom")),
+                ("⌫", L("корзина", "trash")),
+                ("Esc", L("закрыть", "close"))
+            ]
+        case .audio:
+            pairs = [
+                ("← →", L("листать", "browse")),
+                ("S", L("пауза", "play")),
+                ("M", L("звук", "mute")),
+                ("F", L("отметить", "mark")),
+                ("⌫", L("корзина", "trash")),
+                ("Esc", L("закрыть", "close"))
+            ]
+        case .compare:
+            pairs = [
+                ("← →", L("листать", "browse")),
+                ("1–3", L("панель", "pane")),
+                ("F", L("отметить", "mark")),
+                ("C", L("вид", "layout")),
+                ("V", L("шторка", "wipe")),
+                ("⌫", L("корзина", "trash")),
+                ("Esc", L("закрыть", "close"))
+            ]
+        case .curtain:
+            pairs = [
+                ("← →", L("кадр", "frame")),
+                ("V", L("выход из шторки", "exit wipe")),
+                ("F", L("отметить", "mark")),
+                ("T", L("экран", "zoom")),
+                ("Esc", L("закрыть", "close"))
+            ]
+        case .image:
+            pairs = [
+                ("← →", L("листать", "browse")),
+                ("F", L("отметить", "mark")),
+                ("C", L("сравнить", "compare")),
+                ("V", L("шторка", "wipe")),
+                ("T", L("экран", "zoom")),
+                ("⌫", L("корзина", "trash")),
+                ("Esc", L("закрыть", "close"))
+            ]
+        }
+
         let line = NSMutableAttributedString()
         for (index, pair) in pairs.enumerated() {
             if index > 0 {
                 line.append(NSAttributedString(
-                    string: "      ",
-                    attributes: [.font: NSFont.systemFont(ofSize: 12)]
+                    string: "   ·   ",
+                    attributes: [
+                        .font: FPStyle.bodyFont(ofSize: 10.5, weight: .regular),
+                        .foregroundColor: FPStyle.dimText.withAlphaComponent(0.38)
+                    ]
                 ))
             }
             line.append(NSAttributedString(
                 string: pair.0,
                 attributes: [
-                    .font: NSFont.monospacedSystemFont(ofSize: 12, weight: .bold),
+                    .font: FPStyle.monoMetaFont(ofSize: 10.5, weight: .semibold),
                     .foregroundColor: FPStyle.orange
                 ]
             ))
             line.append(NSAttributedString(
-                string: "  " + pair.1.uppercased(),
+                string: " " + pair.1,
                 attributes: [
-                    .font: FPStyle.headingFont(ofSize: 11, weight: .semibold),
-                    .foregroundColor: FPStyle.text.withAlphaComponent(0.78),
-                    .kern: 0.6
+                    .font: FPStyle.bodyFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: FPStyle.text.withAlphaComponent(0.74)
                 ]
             ))
         }
         return line
     }
 
+    func setHintMode(_ mode: HintMode) {
+        currentHintMode = mode
+        hintBar.attributedStringValue = Self.hintText(for: mode)
+    }
+
+    func updateHeaderState(
+        indexText: String,
+        compareCount: Int,
+        isCurtain: Bool,
+        isMaximized: Bool
+    ) {
+        indexLabel.stringValue = indexText
+        indexPill.isHidden = indexText.isEmpty
+
+        let compareSymbol = compareCount == 3 ? "rectangle.split.3x1" : "rectangle.split.2x1"
+        compareButton.setSymbol(compareSymbol, accessibility: L("Сравнение панелей", "Compare panes"))
+        compareButton.isActiveState = compareCount > 1 && !isCurtain
+        compareButton.toolTip = L("Сравнить 1 / 2 / 3 кадра (C)", "Compare 1 / 2 / 3 frames (C)")
+
+        curtainButton.isActiveState = isCurtain
+        curtainButton.toolTip = L("Сравнение шторкой (V)", "Split wipe compare (V)")
+
+        let maxSymbol = isMaximized
+            ? "arrow.down.right.and.arrow.up.left"
+            : "arrow.up.left.and.arrow.down.right"
+        maximizeButton.setSymbol(maxSymbol, accessibility: L("Во весь экран", "Maximize"))
+        maximizeButton.isActiveState = isMaximized
+        maximizeButton.toolTip = L("Растянуть на экран (T)", "Toggle full screen size (T)")
+    }
+
     func applyTheme() {
-        let opacity = min(max(FPStyle.pane.alphaComponent, 0), 1)
-        let gradientOpacity = min(0.75, 0.50 + opacity * 0.25)
-        backgroundGradientView.setColors(
-            FPStyle.gradientEnabled
-                ? [
-                    FPStyle.gradientStart.withAlphaComponent(gradientOpacity),
-                    FPStyle.gradientEnd.withAlphaComponent(gradientOpacity)
-                ]
-                : [
-                    FPStyle.window.withAlphaComponent(gradientOpacity),
-                    FPStyle.window.withAlphaComponent(gradientOpacity)
-                ]
-        )
-        // Прозрачность применяется только к подложке, кадр её не наследует.
-        backdrop.alphaValue = FPStyle.previewOpacity
-        backgroundGradientView.alphaValue = FPStyle.previewOpacity
-        topBar.alphaValue = FPStyle.previewOpacity
-        topBar.layer?.backgroundColor = FPStyle.bar.withAlphaComponent(0.62).cgColor
-        topBar.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.70).cgColor
+        let aurora = FPStyle.isObsidianAurora
+        let cyber = FPStyle.isCyberEditorial
+        let tint = FPStyle.text.blended(withFraction: 0.22, of: FPStyle.accent) ?? FPStyle.text
+
+        if aurora {
+            auroraBackdropView.refreshTheme()
+            auroraBackdropView.isHidden = false
+            auroraBackdropView.alphaValue = max(0.84, FPStyle.previewOpacity)
+            backgroundGradientView.isHidden = true
+            backgroundGradientView.setColors([.clear, .clear])
+            backdrop.alphaValue = 1.0
+        } else {
+            auroraBackdropView.isHidden = true
+            backgroundGradientView.isHidden = false
+            let opacity = min(max(FPStyle.pane.alphaComponent, 0), 1)
+            if cyber {
+                backgroundGradientView.setColors(
+                    FPStyle.gradientEnabled
+                        ? [
+                            FPStyle.gradientStart.withAlphaComponent(0.36),
+                            FPStyle.window.withAlphaComponent(0.92),
+                            FPStyle.gradientEnd.withAlphaComponent(0.32)
+                        ]
+                        : [
+                            FPStyle.window.withAlphaComponent(0.92),
+                            FPStyle.window.withAlphaComponent(0.92)
+                        ]
+                )
+            } else {
+                let gradientOpacity = min(0.88, 0.62 + opacity * 0.26)
+                backgroundGradientView.setColors(
+                    FPStyle.gradientEnabled
+                        ? [
+                            FPStyle.gradientStart.withAlphaComponent(gradientOpacity),
+                            FPStyle.gradientEnd.withAlphaComponent(gradientOpacity)
+                        ]
+                        : [
+                            FPStyle.window.withAlphaComponent(gradientOpacity),
+                            FPStyle.window.withAlphaComponent(gradientOpacity)
+                        ]
+                )
+            }
+            backdrop.alphaValue = FPStyle.previewOpacity
+            backgroundGradientView.alphaValue = max(0.75, FPStyle.previewOpacity)
+        }
+
+        // Нейтральный тёмный «остров» для точной цветопередачи без просвечивания текста позади.
+        let darkroomAlpha = max(0.88, min(0.97, 0.72 + FPStyle.previewOpacity * 0.25))
+        stageIsland.layer?.cornerRadius = cyber ? 6 : 16
+        if aurora {
+            stageIsland.layer?.backgroundColor = NSColor(
+                calibratedRed: 0.043,
+                green: 0.041,
+                blue: 0.052,
+                alpha: darkroomAlpha
+            ).cgColor
+            stageIsland.layer?.borderColor = tint.withAlphaComponent(0.12).cgColor
+        } else {
+            let darkPane = FPStyle.pane.blended(withFraction: 0.45, of: .black) ?? FPStyle.pane
+            stageIsland.layer?.backgroundColor = darkPane.withAlphaComponent(darkroomAlpha).cgColor
+            stageIsland.layer?.borderColor = FPStyle.stroke.withAlphaComponent(0.55).cgColor
+        }
+
+        indexPill.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
+        indexPill.layer?.borderColor = (aurora ? tint.withAlphaComponent(0.12) : FPStyle.stroke.withAlphaComponent(0.45)).cgColor
+        indexLabel.textColor = FPStyle.dimText
+
+        detailPill.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.045).cgColor
+        detailPill.layer?.borderColor = (aurora ? tint.withAlphaComponent(0.10) : FPStyle.stroke.withAlphaComponent(0.45)).cgColor
         detailField.textColor = FPStyle.dimText
+
+        statusPill.layer?.backgroundColor = FPStyle.orange.withAlphaComponent(0.16).cgColor
+        statusPill.layer?.borderColor = FPStyle.orange.withAlphaComponent(0.45).cgColor
         copyHint.textColor = FPStyle.orange
-        hintBar.attributedStringValue = Self.hintText()
+
+        hintPill.layer?.backgroundColor = (aurora
+            ? NSColor(calibratedRed: 0.055, green: 0.052, blue: 0.068, alpha: 0.84)
+            : FPStyle.bar.withAlphaComponent(0.82)).cgColor
+        hintPill.layer?.borderColor = (aurora ? tint.withAlphaComponent(0.12) : FPStyle.stroke.withAlphaComponent(0.55)).cgColor
+        hintBar.attributedStringValue = Self.hintText(for: currentHintMode)
+
+        nameButton.toolTip = L("Нажмите, чтобы скопировать имя файла", "Click to copy file name")
+        compareButton.applyAppearance()
+        curtainButton.applyAppearance()
+        maximizeButton.applyAppearance()
+
         panes.forEach { $0.applyTheme() }
     }
 
@@ -1046,20 +1632,25 @@ final class FPPreviewContentView: NSView {
         nameButton.attributedTitle = NSAttributedString(
             string: name,
             attributes: [
-                .font: FPStyle.headingFont(ofSize: 12, weight: .semibold),
+                .font: FPStyle.headingFont(ofSize: 13, weight: .semibold),
                 .foregroundColor: FPStyle.text,
                 .paragraphStyle: paragraph
             ]
         )
         detailField.stringValue = detail
+        detailPill.isHidden = detail.isEmpty
         copyHint.stringValue = ""
+        statusPill.isHidden = true
     }
 
     func flashStatus(_ message: String) {
-        copyHint.stringValue = message.uppercased()
+        let text = message.uppercased()
+        copyHint.stringValue = text
+        statusPill.isHidden = text.isEmpty
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.2) { [weak self] in
-            if self?.copyHint.stringValue == message.uppercased() {
+            if self?.copyHint.stringValue == text {
                 self?.copyHint.stringValue = ""
+                self?.statusPill.isHidden = true
             }
         }
     }
@@ -1071,6 +1662,18 @@ final class FPPreviewContentView: NSView {
         NSPasteboard.general.setString(name, forType: .string)
         FPActionLog.action("имя файла скопировано", name)
         flashStatus(L("скопировано", "copied"))
+    }
+
+    @objc private func comparePressed() {
+        onCycleCompare?()
+    }
+
+    @objc private func curtainPressed() {
+        onToggleCurtain?()
+    }
+
+    @objc private func maximizePressed() {
+        onToggleMaximize?()
     }
 
     func setPanesHidden(_ hidden: Bool) {
@@ -1090,6 +1693,10 @@ final class FPPreviewContentView: NSView {
             configure(pane)
             panes.append(pane)
             stack.addArrangedSubview(pane)
+        }
+        let multi = target > 1
+        for (idx, pane) in panes.enumerated() {
+            pane.setPaneNumber(idx + 1, multiPane: multi)
         }
     }
 
@@ -1121,11 +1728,16 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
     private var curtainLoadedURLs: [URL] = []
     /// Рамка окна до растягивания на экран, чтобы вернуть её обратно.
     private var framedBeforeMaximize: NSRect?
+    private var themeObservers: [NSObjectProtocol] = []
 
     /// Сетка под окном должна догонять удаление и отметку сразу.
     var onNeedsRefresh: (() -> Void)?
 
     var isPresenting: Bool { window?.isVisible == true }
+
+    deinit {
+        themeObservers.forEach(NotificationCenter.default.removeObserver)
+    }
 
     /// Подставляет файл, выбранный в проводнике, в выделенную панель.
     ///
@@ -1184,6 +1796,22 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         contentView.onKeyDown = { [weak self] event in
             self?.handle(event) ?? false
         }
+        contentView.onCycleCompare = { [weak self] in self?.cyclePaneCount() }
+        contentView.onToggleCurtain = { [weak self] in self?.toggleCurtain() }
+        contentView.onToggleMaximize = { [weak self] in self?.toggleMaximized() }
+
+        let center = NotificationCenter.default
+        let refreshUI: (Notification) -> Void = { [weak self] _ in
+            guard let self else { return }
+            self.contentView.applyTheme()
+            self.curtain.applyTheme()
+            self.updateTitle()
+            self.refreshHeaderState()
+        }
+        themeObservers = [
+            center.addObserver(forName: .fpThemeDidChange, object: nil, queue: .main, using: refreshUI),
+            center.addObserver(forName: .fpLanguageDidChange, object: nil, queue: .main, using: refreshUI)
+        ]
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -1247,6 +1875,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
             updateFocusRings()
             updateTitle()
             refreshCaption()
+            refreshHeaderState()
             if let url = focusedURL { onIndexChanged?(url) }
             return
         }
@@ -1319,9 +1948,48 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         // Панели под шторкой не нужны: они держали бы вторые копии тех же
         // кадров и рисовались впустую.
         contentView.setPanesHidden(isCurtainMode)
+        refreshHeaderState()
         updateCurtainImages()
         prefetchNeighbors()
         if let url = focusedURL { onIndexChanged?(url) }
+    }
+
+    private func refreshHeaderState() {
+        let countText: String
+        if entries.isEmpty {
+            countText = ""
+        } else if isCurtainMode {
+            countText = L("\(focusedIndex + 1) / \(entries.count) · шторка", "\(focusedIndex + 1) / \(entries.count) · wipe")
+        } else if paneCount > 1 {
+            countText = "\(focusedIndex + 1) / \(entries.count) · \(paneCount)×"
+        } else {
+            countText = "\(focusedIndex + 1) / \(entries.count)"
+        }
+        contentView.updateHeaderState(
+            indexText: countText,
+            compareCount: paneCount,
+            isCurtain: isCurtainMode,
+            isMaximized: framedBeforeMaximize != nil
+        )
+
+        let mode: FPPreviewContentView.HintMode
+        if isCurtainMode {
+            mode = .curtain
+        } else if paneCount > 1 {
+            mode = .compare
+        } else if contentView.panes.indices.contains(focusedPane) {
+            let pane = contentView.panes[focusedPane]
+            if pane.isShowingVideo {
+                mode = .video
+            } else if pane.isShowingAudio {
+                mode = .audio
+            } else {
+                mode = .image
+            }
+        } else {
+            mode = .image
+        }
+        contentView.setHintMode(mode)
     }
 
     private func prefetchNeighbors() {
@@ -1459,10 +2127,12 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         if let previous = framedBeforeMaximize {
             framedBeforeMaximize = nil
             window.setFrame(previous, display: true, animate: true)
+            refreshHeaderState()
             return
         }
         framedBeforeMaximize = window.frame
         window.setFrame(visible, display: true, animate: true)
+        refreshHeaderState()
     }
 
     func windowDidChangeScreen(_ notification: Notification) {
@@ -1520,16 +2190,8 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
                 )
             }
         }
-        curtain.translatesAutoresizingMaskIntoConstraints = false
         curtain.applyTheme()
-        contentView.addSubview(curtain)
-        contentView.keepResizeOverlayOnTop()
-        NSLayoutConstraint.activate([
-            curtain.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 40),
-            curtain.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 8),
-            curtain.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -8),
-            curtain.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -32)
-        ])
+        contentView.mountCurtain(curtain)
     }
 
     /// Готовит кадры для шторки.
@@ -1545,6 +2207,10 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         }
         guard urls.count == 2, urls != curtainLoadedURLs else { return }
         curtainLoadedURLs = urls
+        curtain.setLabels(
+            left: urls[0].lastPathComponent,
+            right: urls[1].lastPathComponent
+        )
         let limit = Int(max(curtain.bounds.width, 900) * 2)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let images = urls.map { QyvroPreviewImageCache.decodeImage(url: $0, maxPixelSize: limit) }
@@ -1598,6 +2264,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
             updateFocusRings()
             updateTitle()
             refreshCaption()
+            refreshHeaderState()
             if let url = focusedURL { onIndexChanged?(url) }
         default: return false
         }
@@ -1609,6 +2276,7 @@ final class FPPreviewWindowController: NSWindowController, NSWindowDelegate {
         contentView.panes.forEach { $0.teardown() }
         curtainLoadedURLs = []
         curtain.setImages(left: nil, right: nil)
+        curtain.setLabels(left: "", right: "")
         entries.removeAll()
         onIndexChanged = nil
     }
@@ -1626,7 +2294,15 @@ final class FPCurtainCompareView: NSView {
     private let rightView = NSImageView()
     private let leftClip = NSView()
     private let handle = FPLayerView(color: .clear)
-    private let handleGrip = FPLayerView(color: .clear, cornerRadius: 9)
+    private let dividerLine = FPLayerView(color: .clear)
+    private let handleGrip = FPLayerView(color: .clear, cornerRadius: 17)
+    private let handleIcon = NSImageView()
+    private let leftBadge = FPLayerView(color: .clear, cornerRadius: 10)
+    private let leftBadgeLabel = NSTextField(labelWithString: "")
+    private let rightBadge = FPLayerView(color: .clear, cornerRadius: 10)
+    private let rightBadgeLabel = NSTextField(labelWithString: "")
+    private var leftName = ""
+    private var rightName = ""
     private var position: CGFloat = 0.5
     private var isDragging = false
 
@@ -1634,9 +2310,12 @@ final class FPCurtainCompareView: NSView {
     /// работы уже не помнишь, какой вариант с какой стороны.
     var onPositionChanged: ((CGFloat) -> Void)?
 
+    override var mouseDownCanMoveWindow: Bool { false }
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
+        layer?.cornerRadius = 10
         layer?.masksToBounds = true
 
         for view in [leftView, rightView] {
@@ -1659,13 +2338,44 @@ final class FPCurtainCompareView: NSView {
         leftClip.layer?.masksToBounds = true
         leftClip.translatesAutoresizingMaskIntoConstraints = false
         handle.translatesAutoresizingMaskIntoConstraints = false
+        dividerLine.translatesAutoresizingMaskIntoConstraints = false
+        dividerLine.layer?.shadowColor = NSColor.black.cgColor
+        dividerLine.layer?.shadowOpacity = 0.72
+        dividerLine.layer?.shadowRadius = 3
+        dividerLine.layer?.shadowOffset = .zero
+
         handleGrip.translatesAutoresizingMaskIntoConstraints = false
+        handleGrip.layer?.shadowColor = NSColor.black.cgColor
+        handleGrip.layer?.shadowOpacity = 0.55
+        handleGrip.layer?.shadowRadius = 8
+        handleGrip.layer?.shadowOffset = NSSize(width: 0, height: -2)
+
+        handleIcon.translatesAutoresizingMaskIntoConstraints = false
+        if #available(macOS 11.0, *) {
+            let config = NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold)
+            handleIcon.image = NSImage(systemSymbolName: "chevron.left.chevron.right", accessibilityDescription: nil)?
+                .withSymbolConfiguration(config)
+        }
+
+        for (badge, label) in [(leftBadge, leftBadgeLabel), (rightBadge, rightBadgeLabel)] {
+            badge.translatesAutoresizingMaskIntoConstraints = false
+            badge.layer?.borderWidth = 0.65
+            badge.isHidden = true
+            label.translatesAutoresizingMaskIntoConstraints = false
+            label.lineBreakMode = .byTruncatingMiddle
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            badge.addSubview(label)
+        }
 
         addSubview(rightView)
         addSubview(leftClip)
         leftClip.addSubview(leftView)
+        addSubview(leftBadge)
+        addSubview(rightBadge)
         addSubview(handle)
+        handle.addSubview(dividerLine)
         handle.addSubview(handleGrip)
+        handleGrip.addSubview(handleIcon)
 
         NSLayoutConstraint.activate([
             rightView.topAnchor.constraint(equalTo: topAnchor),
@@ -1681,13 +2391,39 @@ final class FPCurtainCompareView: NSView {
             leftClip.topAnchor.constraint(equalTo: topAnchor),
             leftClip.leadingAnchor.constraint(equalTo: leadingAnchor),
             leftClip.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            leftBadge.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            leftBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            leftBadge.heightAnchor.constraint(equalToConstant: 24),
+            leftBadge.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
+            leftBadgeLabel.leadingAnchor.constraint(equalTo: leftBadge.leadingAnchor, constant: 10),
+            leftBadgeLabel.trailingAnchor.constraint(equalTo: leftBadge.trailingAnchor, constant: -10),
+            leftBadgeLabel.centerYAnchor.constraint(equalTo: leftBadge.centerYAnchor),
+
+            rightBadge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -12),
+            rightBadge.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -12),
+            rightBadge.heightAnchor.constraint(equalToConstant: 24),
+            rightBadge.widthAnchor.constraint(lessThanOrEqualToConstant: 280),
+            rightBadgeLabel.leadingAnchor.constraint(equalTo: rightBadge.leadingAnchor, constant: 10),
+            rightBadgeLabel.trailingAnchor.constraint(equalTo: rightBadge.trailingAnchor, constant: -10),
+            rightBadgeLabel.centerYAnchor.constraint(equalTo: rightBadge.centerYAnchor),
+
             handle.topAnchor.constraint(equalTo: topAnchor),
             handle.bottomAnchor.constraint(equalTo: bottomAnchor),
-            handle.widthAnchor.constraint(equalToConstant: 24),
+            handle.widthAnchor.constraint(equalToConstant: 36),
+
+            dividerLine.centerXAnchor.constraint(equalTo: handle.centerXAnchor),
+            dividerLine.topAnchor.constraint(equalTo: handle.topAnchor),
+            dividerLine.bottomAnchor.constraint(equalTo: handle.bottomAnchor),
+            dividerLine.widthAnchor.constraint(equalToConstant: 1.5),
+
             handleGrip.centerXAnchor.constraint(equalTo: handle.centerXAnchor),
             handleGrip.centerYAnchor.constraint(equalTo: handle.centerYAnchor),
-            handleGrip.widthAnchor.constraint(equalToConstant: 18),
-            handleGrip.heightAnchor.constraint(equalToConstant: 44)
+            handleGrip.widthAnchor.constraint(equalToConstant: 34),
+            handleGrip.heightAnchor.constraint(equalToConstant: 34),
+
+            handleIcon.centerXAnchor.constraint(equalTo: handleGrip.centerXAnchor),
+            handleIcon.centerYAnchor.constraint(equalTo: handleGrip.centerYAnchor)
         ])
         applyTheme()
     }
@@ -1695,10 +2431,54 @@ final class FPCurtainCompareView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     func applyTheme() {
-        layer?.backgroundColor = NSColor.black.withAlphaComponent(0.22).cgColor
-        handleGrip.layer?.backgroundColor = FPStyle.orange.withAlphaComponent(0.92).cgColor
-        handleGrip.layer?.borderColor = NSColor.black.withAlphaComponent(0.35).cgColor
-        handleGrip.layer?.borderWidth = 1
+        let tint = FPStyle.text.blended(withFraction: 0.22, of: FPStyle.accent) ?? FPStyle.text
+        layer?.backgroundColor = NSColor.clear.cgColor
+        dividerLine.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.84).cgColor
+        handleGrip.layer?.backgroundColor = NSColor(calibratedRed: 0.06, green: 0.056, blue: 0.074, alpha: 0.90).cgColor
+        handleGrip.layer?.borderColor = FPStyle.orange.withAlphaComponent(0.85).cgColor
+        handleGrip.layer?.borderWidth = 1.25
+        handleIcon.contentTintColor = FPStyle.text
+
+        for badge in [leftBadge, rightBadge] {
+            badge.layer?.backgroundColor = NSColor(calibratedRed: 0.055, green: 0.052, blue: 0.068, alpha: 0.84).cgColor
+            badge.layer?.borderColor = tint.withAlphaComponent(0.14).cgColor
+        }
+        refreshBadges()
+    }
+
+    func setLabels(left: String, right: String) {
+        leftName = left
+        rightName = right
+        refreshBadges()
+    }
+
+    private func refreshBadges() {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingMiddle
+        func format(_ tag: String, _ name: String) -> NSAttributedString {
+            let line = NSMutableAttributedString()
+            line.append(NSAttributedString(
+                string: tag,
+                attributes: [
+                    .font: FPStyle.monoMetaFont(ofSize: 10.5, weight: .bold),
+                    .foregroundColor: FPStyle.orange,
+                    .paragraphStyle: paragraph
+                ]
+            ))
+            line.append(NSAttributedString(
+                string: "  \(name)",
+                attributes: [
+                    .font: FPStyle.bodyFont(ofSize: 11, weight: .medium),
+                    .foregroundColor: FPStyle.text.withAlphaComponent(0.90),
+                    .paragraphStyle: paragraph
+                ]
+            ))
+            return line
+        }
+        leftBadge.isHidden = leftName.isEmpty
+        rightBadge.isHidden = rightName.isEmpty
+        if !leftName.isEmpty { leftBadgeLabel.attributedStringValue = format("A", leftName) }
+        if !rightName.isEmpty { rightBadgeLabel.attributedStringValue = format("B", rightName) }
     }
 
     func setImages(left: NSImage?, right: NSImage?) {
@@ -1712,7 +2492,7 @@ final class FPCurtainCompareView: NSView {
         let split = bounds.width * position
         leftClip.frame = NSRect(x: 0, y: 0, width: split, height: bounds.height)
         leftView.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height)
-        handle.frame = NSRect(x: split - 12, y: 0, width: 24, height: bounds.height)
+        handle.frame = NSRect(x: split - 18, y: 0, width: 36, height: bounds.height)
     }
 
     override func resetCursorRects() {
@@ -1721,7 +2501,7 @@ final class FPCurtainCompareView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
-        isDragging = abs(point.x - bounds.width * position) <= 18
+        isDragging = abs(point.x - bounds.width * position) <= 22
         if isDragging { move(to: point.x) }
     }
 
